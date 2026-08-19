@@ -1,0 +1,19 @@
+[Unit]
+Description=Shadow Ledger Worker
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=shadow-ledger
+Group=shadow-ledger
+WorkingDirectory=/opt/shadow-ledger
+EnvironmentFile=/etc/shadow-ledger/environment
+ExecStart=/opt/shadow-ledger/.venv/bin/ledger-worker
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/data/project/shadow-ledger
+
+[Install]
+WantedBy=multi-user.target

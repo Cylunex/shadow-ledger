@@ -1,0 +1,15 @@
+[program:shadow-ledger-web]
+directory=/opt/shadow-ledger
+command=/opt/shadow-ledger/.venv/bin/ledger-web
+environment=LEDGER_ENV="production"
+autostart=true
+autorestart=true
+stopsignal=TERM
+
+[program:shadow-ledger-worker]
+directory=/opt/shadow-ledger
+command=/opt/shadow-ledger/.venv/bin/ledger-worker
+environment=LEDGER_ENV="production"
+autostart=true
+autorestart=true
+stopsignal=TERM

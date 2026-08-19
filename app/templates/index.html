@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Shadow Ledger</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body data-page="{{ page }}">
+  <a class="skip" href="#main">跳到主要内容</a>
+  <header class="topbar">
+    <div><span class="eyebrow">SHADOW</span><h1>Ledger</h1></div>
+    <button id="draft-button" class="quiet" type="button">草稿箱</button>
+  </header>
+  <main id="main">
+    <section id="records-page" class="page">
+      <article class="summary" aria-labelledby="summary-title">
+        <p id="summary-title" class="eyebrow">本月概览</p>
+        <div class="summary-grid"><div><strong id="expense">—</strong><span>支出</span></div><div><strong id="income">—</strong><span>收入</span></div><div><strong id="refund">—</strong><span>退款</span></div><div><strong id="net">—</strong><span>净支出</span></div></div>
+      </article>
+      <form id="quick-form" class="quick-card">
+        <input type="hidden" id="csrf">
+        <div class="type-switch" role="group" aria-label="金额类型"><button type="button" data-type="expense" class="active">支出</button><button type="button" data-type="income">收入</button><button type="button" data-type="refund">退款</button></div>
+        <label for="amount">金额</label><div class="amount-row"><span>¥</span><input id="amount" name="amount" inputmode="decimal" autocomplete="off" required placeholder="0.00" aria-describedby="form-status"></div>
+        <label for="description">一句话描述 <span>可选</span></label><input id="description" name="description" maxlength="500" placeholder="午餐、工资、退款……">
+        <details><summary>日期、分类与更多</summary><div class="details-grid"><label>日期时间<input id="occurred-at" type="datetime-local"></label><label>分类<select id="category"><option value="">未分类</option></select></label></div></details>
+        <button class="primary" type="submit">记录</button><p id="form-status" role="status"></p>
+      </form>
+      <div class="shortcuts"><button id="text-capture">说一句</button><button id="asset-capture">扫截图</button><button id="copy-last">复制上次</button></div>
+      <section><div class="section-title"><h2>最近记录</h2><button id="refresh">刷新</button></div><div id="timeline" class="timeline" aria-live="polite"></div></section>
+    </section>
+    <section id="consumption-page" class="page"><h2>消费</h2><p class="muted">按场景回看消费内容、原始商家与体验。</p><div id="scene-cards" class="card-grid"></div><h3>常去商家</h3><div id="merchant-list" class="list"></div><h3>常买内容</h3><div id="item-list" class="list"></div></section>
+    <section id="planning-page" class="page"><h2>计划</h2><div class="tabs"><button data-plan="intents" class="active">想要</button><button data-plan="commitments">周期</button><button data-plan="reminders">提醒</button></div><div id="planning-list" class="list"></div><button id="add-plan" class="primary">添加计划</button></section>
+    <section id="insights-page" class="page"><h2>洞察</h2><p class="muted">所有金额统计只包含已确认事实，未知金额消费只进入频率。</p><div id="insight-summary" class="card-grid"></div><h3>消费场景频率</h3><div id="insight-scenes" class="bars"></div><h3>消费目标</h3><div id="budget-list" class="list"></div></section>
+  </main>
+  <nav class="bottom-nav" aria-label="主导航"><a href="/" data-page="records">记录</a><a href="/consumption" data-page="consumption">消费</a><a href="/planning" data-page="planning">计划</a><a href="/insights" data-page="insights">洞察</a></nav>
+  <dialog id="dialog"><form method="dialog"><button class="dialog-close" aria-label="关闭">×</button><div id="dialog-body"></div></form></dialog>
+</body>
+</html>
