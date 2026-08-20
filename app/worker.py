@@ -212,7 +212,11 @@ def process_job(db: Session, job: BackgroundJob) -> None:
         else:
             raise ValueError("invalid_export_format")
         asset_id = AssetClient(get_settings()).store_export(
-            f"shadow-ledger-export.{export_format}", mime_type, content
+            owner_id,
+            f"shadow-ledger-export.{export_format}",
+            mime_type,
+            content,
+            f"ledger-export:{job.id}",
         )
         job.payload = {**job.payload, "asset_id": str(asset_id)}
     else:

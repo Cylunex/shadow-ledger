@@ -577,6 +577,7 @@ def asset_complete(
                 "asset_id": str(asset_id),
                 "reference_key": f"ledger:capture_source:{source.id}:{data.usage}",
                 "target_uri": f"shadow://ledger/capture-sources/{source.id}",
+                "usage": data.usage,
             },
         )
     )

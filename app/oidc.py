@@ -138,6 +138,32 @@ def _claims(id_token: str, metadata: dict, settings: Settings) -> dict:
         raise AppError(401, "invalid_id_token", "ID Token 校验失败") from exc
 
 
+def _groups_from_tokens(tokens: dict, claims: dict, metadata: dict) -> list[str]:
+    groups = claims.get("groups")
+    if isinstance(groups, list) and all(isinstance(group, str) for group in groups):
+        return groups
+    access_token = tokens.get("access_token")
+    userinfo_endpoint = metadata.get("userinfo_endpoint")
+    if not isinstance(access_token, str) or not access_token or not userinfo_endpoint:
+        raise AppError(401, "userinfo_unavailable", "身份服务未返回用户组信息")
+    try:
+        response = httpx.get(
+            userinfo_endpoint,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=5.0,
+        )
+        response.raise_for_status()
+        profile = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise AppError(401, "userinfo_failed", "用户信息校验失败") from exc
+    if not secrets.compare_digest(str(profile.get("sub", "")), str(claims.get("sub", ""))):
+        raise AppError(401, "userinfo_subject_mismatch", "用户信息主体不匹配")
+    groups = profile.get("groups")
+    if not isinstance(groups, list) or not all(isinstance(group, str) for group in groups):
+        raise AppError(401, "groups_invalid", "用户组信息无效")
+    return groups
+
+
 @router.get("/auth/callback")
 def callback(
     request: Request,
@@ -176,10 +202,9 @@ def callback(
                 "grant_type": "authorization_code",
                 "code": code,
                 "redirect_uri": transaction.redirect_uri,
-                "client_id": settings.oidc_client_id,
-                "client_secret": settings.resolved_oidc_client_secret,
                 "code_verifier": verifier,
             },
+            auth=(settings.oidc_client_id, settings.resolved_oidc_client_secret),
             timeout=5.0,
         )
         token_response.raise_for_status()
@@ -190,7 +215,7 @@ def callback(
     claims = _claims(tokens.get("id_token", ""), metadata, settings)
     if digest(str(claims.get("nonce", ""))) != transaction.nonce_hash:
         raise AppError(401, "nonce_mismatch", "ID Token nonce 不匹配")
-    groups = claims.get("groups", [])
+    groups = _groups_from_tokens(tokens, claims, metadata)
     if settings.required_group not in groups:
         raise AppError(403, "group_required", "当前用户没有 Ledger 访问权限")
     identity = db.scalar(

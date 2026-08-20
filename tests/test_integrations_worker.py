@@ -40,28 +40,51 @@ def integration_settings(tmp_path) -> Settings:
 
 def test_asset_adapter_only_accepts_service_returned_https_targets(monkeypatch, tmp_path):
     settings = integration_settings(tmp_path)
+    request = {}
+
+    def create_upload(url, **kwargs):
+        request.update(url=url, **kwargs)
+        return FakeResponse(
+            {
+                "upload_session_id": "upload-1",
+                "target": {
+                    "method": "PUT",
+                    "url": "https://asset.example.invalid/upload/1",
+                    "headers": {"Authorization": "Upload short-lived"},
+                },
+                "alternate_targets": [
+                    {
+                        "method": "PUT",
+                        "url": "https://asset-lan.example.invalid/upload/1",
+                        "headers": {"Authorization": "Upload short-lived"},
+                    }
+                ],
+            }
+        )
+
     monkeypatch.setattr(
         "app.integrations.httpx.post",
-        lambda *_args, **_kwargs: FakeResponse(
-            {
-                "upload_id": "upload-1",
-                "canonical_target": "https://asset.example.invalid/upload/1",
-                "alternate_targets": ["https://asset-lan.example.invalid/upload/1"],
-                "upload_token": "short-lived",
-            }
-        ),
+        create_upload,
     )
     result = AssetClient(settings).init_upload(
         "alice", AssetInit(filename="receipt.png", mime_type="image/png", size=100), "upload-key-1"
     )
     assert result["upload_id"] == "upload-1"
+    assert request["url"] == "https://asset.example.invalid/v1/upload-sessions"
+    assert request["json"]["original_filename"] == "receipt.png"
+    assert request["json"]["owner_id"] != "alice"
+    assert "app_id" not in request["json"]
 
     monkeypatch.setattr(
         "app.integrations.httpx.post",
         lambda *_args, **_kwargs: FakeResponse(
             {
-                "upload_id": "upload-2",
-                "canonical_target": "http://unsafe.example.invalid/upload/2",
+                "upload_session_id": "upload-2",
+                "target": {
+                    "method": "PUT",
+                    "url": "http://unsafe.example.invalid/upload/2",
+                    "headers": {},
+                },
                 "alternate_targets": [],
             }
         ),

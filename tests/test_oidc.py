@@ -13,7 +13,7 @@ from starlette.requests import Request
 from app.config import Settings
 from app.db import Base
 from app.main import create_app
-from app.oidc import _claims, exact_redirect_uri
+from app.oidc import _claims, _groups_from_tokens, exact_redirect_uri
 
 
 class FakeResponse:
@@ -115,6 +115,40 @@ def test_id_token_validates_signature_issuer_audience_nonce_fields(monkeypatch):
         assert getattr(exc, "code", None) == "invalid_id_token"
     else:
         raise AssertionError("wrong audience was accepted")
+
+
+def test_groups_fall_back_to_matching_userinfo_subject(monkeypatch):
+    monkeypatch.setattr(
+        "app.oidc.httpx.get",
+        lambda *_args, **_kwargs: FakeResponse(
+            {"sub": "user-1", "groups": ["ledger-users"]}
+        ),
+    )
+    groups = _groups_from_tokens(
+        {"access_token": "access-token"},
+        {"sub": "user-1"},
+        {"userinfo_endpoint": "https://identity.example.invalid/userinfo"},
+    )
+    assert groups == ["ledger-users"]
+
+
+def test_userinfo_subject_mismatch_is_rejected(monkeypatch):
+    monkeypatch.setattr(
+        "app.oidc.httpx.get",
+        lambda *_args, **_kwargs: FakeResponse(
+            {"sub": "another-user", "groups": ["ledger-users"]}
+        ),
+    )
+    try:
+        _groups_from_tokens(
+            {"access_token": "access-token"},
+            {"sub": "user-1"},
+            {"userinfo_endpoint": "https://identity.example.invalid/userinfo"},
+        )
+    except Exception as exc:
+        assert getattr(exc, "code", None) == "userinfo_subject_mismatch"
+    else:
+        raise AssertionError("mismatched UserInfo subject was accepted")
 
 
 def test_full_oidc_flow_consumes_state_and_creates_opaque_session(monkeypatch):
