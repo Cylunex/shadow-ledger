@@ -16,6 +16,14 @@ uploads/
 dist/
 build/
 
-# 真实入口、端口、账号与本地部署覆盖不得入库。
+# Real deployment and operations material is maintained outside the repository.
 config/*.local.*
-deploy/*.local.*
+deploy/
+ops/
+operations/
+*.pem
+*.key
+*.p12
+*.pfx
+*.token
+*.secret

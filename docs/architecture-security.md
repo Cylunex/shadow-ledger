@@ -134,72 +134,15 @@ Host 只能从可信 allowlist 选择，不能根据任意 `Host`/`X-Forwarded-H
 - 上传完成后校验实际大小、MIME、哈希和图片解码；
 - 访问使用短时 grant，页面不持久化签名 URL。
 
-## 10. 配置与秘密
+## 10. 运行边界
 
-仓库只提供键名和示例值。生产秘密建议放在：
+仓库只定义配置字段、接口约束与安全不变量。真实域名、地址、端口、凭据、密钥路径、部署拓扑、
+探活策略和备份恢复流程统一由仓库外的本地运维中心管理。
 
-```text
-/data/project/.secrets/shadow-ledger/
-├── oidc-client-secret
-├── database-url
-├── asset-service-token
-├── service-token-hashes
-└── capture-provider-key        # 仅启用外部解析器时
-```
+服务仍必须满足以下约束：浏览器身份与机器身份分离；代理身份头不可信任公网输入；日志不得记录
+自由文本、金额明细、Cookie 或 Token；领域数据库与 Asset 引用都需要可恢复、可对账。
 
-运行配置至少包括：环境、数据库 secret file、OIDC issuer/client/callback allowlist、Session TTL、
-Asset base URL/token file、默认币种、默认时区、上传限制和可信代理。真实域名、端口和内网地址不进
-Git。
-
-## 11. 部署拓扑
-
-```text
-公网浏览器
-→ 云端 HTTPS Nginx
-→ 受限隧道
-→ NAS HTTPS/HTTP Nginx
-→ ledger-web (127.0.0.1)
-
-局域网浏览器 / Shadow App
-→ NAS HTTPS 映射端口
-→ NAS Nginx
-→ ledger-web
-
-ledger-worker + PostgreSQL + 文件外秘密
-→ NAS
-
-Asset
-→ NAS，云端 canonical + NAS HTTPS alternate
-```
-
-应用只监听回环。Nginx 清空客户端提交的 Remote-* 和内部身份头。机器 API 仍由 Ledger 自己验证
-Bearer，不能依赖云端 Forward Auth。
-
-## 12. 探活与可观测性
-
-```text
-/healthz   仅进程存活，不查数据库和外部服务
-/readyz    数据库可用、迁移版本兼容
-/metrics   仅内网或受控抓取
-```
-
-结构化日志字段：request_id、actor_type、route、status、duration、aggregate_id、job_type、
-error_code；不得记录自由文本、金额明细、原始商家、Cookie 或 Token。
-
-指标：请求延迟/错误率、DB pool、草稿数量、Capture 成功率与延迟、Job backlog、Outbox 重试、
-提醒延迟、Asset/引用对账异常。
-
-## 13. 备份与恢复
-
-- PostgreSQL 每日逻辑备份 + 定期物理/快照备份；
-- Ledger 备份不复制 Asset 字节，但导出 Asset ID/Reference 清单；
-- Asset 按 Platform 独立策略备份；
-- OIDC Session 库可丢弃，领域数据库不可；
-- 密钥备份单独加密，不进入数据库 dump；
-- 每个发布阶段执行一次空库迁移和最近备份恢复演练；
-- 恢复后运行 Record/子对象不变量、Asset 引用和 Outbox 对账。
-
-## 14. 容量假设
+## 11. 容量假设
 
 个人部署目标：数十万 Record、百万以内 ConsumptionLine、单用户为主。所有列表必须分页；洞察按
 月和 owner 建索引，慢查询测量后再增加物化汇总。首版不为假设中的超大规模提前拆服务。
