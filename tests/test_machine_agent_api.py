@@ -1,0 +1,282 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import func, select
+
+from app import db as database
+from app.config import Settings
+from app.db import Base
+from app.main import create_app
+from app.models import (
+    AuditEvent,
+    BudgetTarget,
+    LedgerAgentGrant,
+    LedgerRecord,
+    MoneyCategory,
+    MoneyEntry,
+)
+
+AGENT_ID = "ledger-helper"
+OWNER_ID = "https://identity.example.com|owner-example"
+TOKEN = "ledger-agent-test-token-that-is-long-enough"
+
+
+@pytest.fixture
+def agent_app_factory(settings: Settings, tmp_path: Path):
+    @contextmanager
+    def factory(
+        scopes: tuple[str, ...],
+        *,
+        grant: bool = True,
+        allow_summary: bool = True,
+        allow_records: bool = True,
+        allow_budgets: bool = True,
+        allow_drafts: bool = True,
+        audiences: tuple[str, ...] = ("ledger",),
+    ) -> Iterator[tuple[TestClient, object]]:
+        secrets_dir = tmp_path / ("agent-secrets-" + hashlib.sha256(" ".join(scopes).encode()).hexdigest()[:8])
+        digest_path = secrets_dir / "agents" / AGENT_ID / "current-token.sha256"
+        digest_path.parent.mkdir(parents=True, exist_ok=True)
+        digest_path.write_text(hashlib.sha256(TOKEN.encode()).hexdigest(), encoding="utf-8")
+        registry_path = secrets_dir / "registry.yaml"
+        registry_path.write_text(
+            "\n".join(
+                [
+                    "version: 1",
+                    "agents:",
+                    f"  {AGENT_ID}:",
+                    "    owner_app: ledger",
+                    f"    audiences: [{', '.join(audiences)}]",
+                    f"    scopes: [{', '.join(scopes)}]",
+                    "    credential_hash_files:",
+                    f"      - agents/{AGENT_ID}/current-token.sha256",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        resolved = settings.model_copy(
+            update={
+                "agent_registry_path": registry_path,
+                "agent_secrets_dir": secrets_dir,
+                "oidc_callbacks": ["https://ledger.example.com/auth/callback"],
+                "allowed_origins": ["https://ledger.example.com"],
+            }
+        )
+        app = create_app(resolved, "sqlite+pysqlite:///:memory:")
+        with TestClient(app, base_url="https://ledger.example.com") as client:
+            assert database.engine is not None
+            Base.metadata.create_all(database.engine)
+            if grant:
+                assert database.SessionLocal is not None
+                with database.SessionLocal.begin() as session:
+                    session.add(
+                        LedgerAgentGrant(
+                            agent_id=AGENT_ID,
+                            owner_id=OWNER_ID,
+                            granted_by="owner-example",
+                            allow_summary=allow_summary,
+                            allow_records=allow_records,
+                            allow_budgets=allow_budgets,
+                            allow_drafts=allow_drafts,
+                        )
+                    )
+            yield client, app
+            Base.metadata.drop_all(database.engine)
+
+    return factory
+
+
+def _authorization() -> dict[str, str]:
+    return {"Authorization": f"Bearer {TOKEN}"}
+
+
+def _seed_financial_facts() -> None:
+    assert database.SessionLocal is not None
+    occurred_at = datetime(2026, 8, 10, 8, 30, tzinfo=UTC)
+    with database.SessionLocal.begin() as session:
+        category = MoneyCategory(
+            owner_id=OWNER_ID,
+            key="food",
+            name="餐饮",
+            sort_order=1,
+            active=True,
+        )
+        record = LedgerRecord(
+            owner_id=OWNER_ID,
+            record_kind="money_only",
+            state="confirmed",
+            occurred_at=occurred_at,
+            timezone="Asia/Shanghai",
+            note="must-not-reach-agent",
+            revision=2,
+            confirmed_at=occurred_at,
+        )
+        session.add_all([category, record])
+        session.flush()
+        session.add(
+            MoneyEntry(
+                record=record,
+                type="expense",
+                amount=Decimal("27.5000"),
+                currency="CNY",
+                category_id=category.id,
+                title="private transaction title",
+            )
+        )
+        session.add(
+            BudgetTarget(
+                owner_id=OWNER_ID,
+                category_id=category.id,
+                budget_month=date(2026, 8, 1),
+                monthly_amount=Decimal("500.0000"),
+                currency="CNY",
+                active=True,
+                revision=1,
+            )
+        )
+
+
+def test_machine_bearer_scope_and_resource_grant_fail_closed(agent_app_factory) -> None:
+    with agent_app_factory(("ledger.summary.read",), grant=False) as (client, _):
+        missing = client.get("/api/machine/v1/agent/summary?month=2026-08")
+        invalid = client.get(
+            "/api/machine/v1/agent/summary?month=2026-08",
+            headers={"Authorization": "Bearer invalid-test-token-that-is-long-enough"},
+        )
+        no_grant = client.get(
+            "/api/machine/v1/agent/summary?month=2026-08", headers=_authorization()
+        )
+
+    assert missing.status_code == 401
+    assert missing.headers["www-authenticate"] == "Bearer"
+    assert missing.json()["error"]["code"] == "machine_bearer_required"
+    assert invalid.status_code == 401
+    assert invalid.json()["error"]["code"] == "machine_bearer_invalid"
+    assert no_grant.status_code == 404
+    assert no_grant.json()["error"]["code"] == "ledger_grant_not_found"
+
+    with agent_app_factory(("ledger.summary.read",), audiences=("travel",)) as (client, _):
+        wrong_audience = client.get(
+            "/api/machine/v1/agent/summary?month=2026-08", headers=_authorization()
+        )
+
+    assert wrong_audience.status_code == 401
+    assert wrong_audience.json()["error"]["code"] == "machine_bearer_invalid"
+
+    with agent_app_factory(("ledger.records.read",), allow_records=False) as (client, _):
+        denied = client.get(
+            "/api/machine/v1/agent/records?month=2026-08", headers=_authorization()
+        )
+        wrong_scope = client.get(
+            "/api/machine/v1/agent/summary?month=2026-08", headers=_authorization()
+        )
+
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "ledger_grant_forbidden"
+    assert wrong_scope.status_code == 403
+    assert wrong_scope.json()["error"]["code"] == "machine_scope_forbidden"
+
+
+def test_machine_reads_are_minimal_currency_bounded_and_audited(agent_app_factory) -> None:
+    scopes = ("ledger.summary.read", "ledger.records.read", "ledger.budgets.read")
+    with agent_app_factory(scopes) as (client, _):
+        _seed_financial_facts()
+        summary = client.get(
+            "/api/machine/v1/agent/summary?month=2026-08&currency=CNY",
+            headers=_authorization(),
+        )
+        records = client.get(
+            "/api/machine/v1/agent/records?month=2026-08", headers=_authorization()
+        )
+        budgets = client.get(
+            "/api/machine/v1/agent/budgets?month=2026-08", headers=_authorization()
+        )
+
+        assert summary.status_code == 200, summary.text
+        assert summary.json()["expense"] == "27.5000"
+        assert summary.json()["exchange_rate_applied"] is False
+        assert records.status_code == 200, records.text
+        assert records.json()["items"][0]["amount"] == "27.5000"
+        assert records.json()["items"][0]["category_key"] == "food"
+        serialized_records = records.text
+        assert "private transaction title" not in serialized_records
+        assert "must-not-reach-agent" not in serialized_records
+        assert "account" not in serialized_records.lower()
+        assert "payment" not in serialized_records.lower()
+        assert budgets.status_code == 200, budgets.text
+        assert budgets.json()["items"][0]["remaining"] == "472.5000"
+        assert budgets.json()["exchange_rate_applied"] is False
+
+        assert database.SessionLocal is not None
+        with database.SessionLocal() as session:
+            audits = list(
+                session.scalars(
+                    select(AuditEvent).where(AuditEvent.actor_type == "agent").order_by(AuditEvent.action)
+                )
+            )
+        audit_payload = json.dumps([row.details for row in audits], sort_keys=True)
+        assert {row.action for row in audits} == {
+            "agent.summary.read",
+            "agent.records.read",
+            "agent.budgets.read",
+        }
+        assert "27.5" not in audit_payload
+        assert "private transaction title" not in audit_payload
+
+
+def test_agent_draft_is_deterministic_reversible_and_idempotent(agent_app_factory) -> None:
+    with agent_app_factory(("ledger.records.draft",)) as (client, _):
+        payload = {
+            "occurred_at": "2026-08-22T09:30:00+08:00",
+            "timezone": "Asia/Shanghai",
+            "money_type": "expense",
+            "amount": "32.5000",
+            "currency": "cny",
+            "title": "private draft title",
+        }
+        headers = {**_authorization(), "Idempotency-Key": "agent-draft-example"}
+        created = client.post("/api/machine/v1/agent/drafts", headers=headers, json=payload)
+        repeated = client.post("/api/machine/v1/agent/drafts", headers=headers, json=payload)
+        changed = client.post(
+            "/api/machine/v1/agent/drafts",
+            headers=headers,
+            json={**payload, "amount": "33.0000"},
+        )
+        invented_account = client.post(
+            "/api/machine/v1/agent/drafts",
+            headers={**_authorization(), "Idempotency-Key": "agent-draft-account"},
+            json={**payload, "account_id": "not-supported", "exchange_rate": "1.0000"},
+        )
+
+        assert created.status_code == repeated.status_code == 201
+        assert created.json() == repeated.json()
+        assert created.json()["state"] == "draft"
+        assert created.json()["reversible"] is True
+        assert created.json()["final_entry_created"] is False
+        assert changed.status_code == 409
+        assert changed.json()["error"]["code"] == "idempotency_mismatch"
+        assert invented_account.status_code == 422
+
+        assert database.SessionLocal is not None
+        with database.SessionLocal() as session:
+            assert session.scalar(select(func.count()).select_from(LedgerRecord)) == 1
+            record = session.scalar(select(LedgerRecord))
+            audit = session.scalar(
+                select(AuditEvent).where(AuditEvent.action == "record.created")
+            )
+            assert record is not None and record.state == "draft"
+            assert record.money_entry is not None
+            assert record.money_entry.amount == Decimal("32.5000")
+            assert record.money_entry.currency == "CNY"
+            assert audit is not None and audit.actor_type == "agent"
+            assert set(audit.details) == {"state", "record_kind"}

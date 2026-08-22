@@ -162,7 +162,12 @@ def idempotency_save(
 
 
 def create_record(
-    db: Session, owner_id: str, data: RecordCreate, idempotency_key: str, actor_id: str
+    db: Session,
+    owner_id: str,
+    data: RecordCreate,
+    idempotency_key: str,
+    actor_id: str,
+    actor_type: str = "user",
 ) -> LedgerRecord:
     existing = idempotency_lookup(
         db, owner_id, "records.create", idempotency_key, data.model_dump()
@@ -190,7 +195,7 @@ def create_record(
     db.add(
         AuditEvent(
             owner_id=owner_id,
-            actor_type="user",
+            actor_type=actor_type,
             actor_id=actor_id,
             action="record.created",
             aggregate_type="record",

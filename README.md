@@ -36,3 +36,4 @@ uv run ledger-web
 - [API 合同](docs/api-contract.md)
 - [架构与安全](docs/architecture-security.md)
 - [跨项目集成](docs/integrations.md)
+- [Shadow Agent 插件接入](docs/agent-plugin.md)

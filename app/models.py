@@ -512,6 +512,23 @@ class IdempotencyRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class LedgerAgentGrant(Timestamps, Base):
+    __tablename__ = "ledger_agent_grants"
+    __table_args__ = (
+        UniqueConstraint("agent_id", name="uq_ledger_agent_grant_agent"),
+        Index("idx_ledger_agent_grants_owner", "owner_id", "active"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    agent_id: Mapped[str] = mapped_column(String(64))
+    owner_id: Mapped[str] = mapped_column(Text)
+    granted_by: Mapped[str] = mapped_column(Text)
+    allow_summary: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_records: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_budgets: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_drafts: Mapped[bool] = mapped_column(Boolean, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class UserPreference(Base):
     __tablename__ = "user_preferences"
     owner_id: Mapped[str] = mapped_column(Text, primary_key=True)

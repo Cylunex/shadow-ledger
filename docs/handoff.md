@@ -15,6 +15,8 @@ app/models.py               SQLAlchemy v1 模型
 app/oidc.py                 Code + PKCE 与不透明 Session
 app/integrations.py         Asset 与 Capture provider ports
 app/worker.py               PostgreSQL Job/Outbox/Reminder
+app/machine.py              Shadow Agent read + draft 机器 API
+shadow-plugin.yaml          运行时无关插件 Definition
 migrations/                 Alembic 历史
 tests/                      领域、HTTP、安全和 OIDC 测试
 deploy/                     脱敏部署模板
@@ -30,7 +32,8 @@ deploy/                     脱敏部署模板
 - 原始商家、渠道、商品和 Capture 原文不会被规范身份覆盖；
 - 周期事项只创建 Reminder 或 draft，从不自动确认；
 - 文件字节只进入 Asset；跨项目对象只保存 `shadow://` URI；
-- UseCycle、Forecast、Agent/MCP、自动抓单仍未实现，等待 v2 门槛。
+- Agent 首期仅开放最小披露读取和可撤销草案；UseCycle、Forecast、MCP、Agent 正式入账与
+  自动抓单仍未实现。
 
 改变这些内容前必须新增 ADR，并同步模型、迁移、API、页面和实施文档。
 

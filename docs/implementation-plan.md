@@ -134,7 +134,7 @@
 |---|---|
 | UseCycle | 用户持续表达开始/结束使用需求，且 ItemIdentity 已稳定 |
 | Forecast | 至少积累可解释的重复样本，并定义准确率/误报评估 |
-| Agent Tools | API 与权限稳定，draft-only 风险测试通过 |
+| Agent 正式写入 | read + draft 插件稳定，ConfirmationReceipt 与正式写入风险测试通过 |
 | 邮件/平台自动导入 | 有稳定合法来源、幂等 external ID 和明确维护成本 |
 | 高级预算 | 简单分类月度统计无法满足实际决策需求 |
 

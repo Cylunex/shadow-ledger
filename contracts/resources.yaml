@@ -1,0 +1,10 @@
+version: 1
+resources:
+  - type: ledger-record
+    uri_template: shadow://ledger/records/{record_id}
+    owner: ledger
+    resource_grant_required: true
+  - type: ledger-budget-target
+    uri_template: shadow://ledger/budget-targets/{budget_id}
+    owner: ledger
+    resource_grant_required: true

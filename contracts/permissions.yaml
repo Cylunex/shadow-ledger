@@ -1,0 +1,18 @@
+version: 1
+permissions:
+  - capability: ledger.summary.read
+    audience: ledger
+    scopes: [ledger.summary.read]
+    resource_grant: ledger-workspace.summary
+  - capability: ledger.records.read
+    audience: ledger
+    scopes: [ledger.records.read]
+    resource_grant: ledger-workspace.records
+  - capability: ledger.budgets.read
+    audience: ledger
+    scopes: [ledger.budgets.read]
+    resource_grant: ledger-workspace.budgets
+  - capability: ledger.records.draft
+    audience: ledger
+    scopes: [ledger.records.draft]
+    resource_grant: ledger-workspace.drafts

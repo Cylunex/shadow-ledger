@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     capture_provider_key_file: Path | None = None
     platform_resolver_url: str | None = None
     service_token_hashes_file: Path | None = None
+    agent_registry_path: Path | None = None
+    agent_secrets_dir: Path | None = None
     trusted_proxies: list[str] = Field(default_factory=list)
     dev_auth: bool = False
     max_request_bytes: int = 2_000_000
@@ -93,6 +95,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def secure_production(self) -> Settings:
+        if bool(self.agent_registry_path) != bool(self.agent_secrets_dir):
+            raise ValueError("agent registry and secrets directory must be configured together")
         if self.env == "production":
             if self.dev_auth:
                 raise ValueError("dev_auth is forbidden in production")

@@ -1,0 +1,108 @@
+version: 2
+app_id: ledger
+package_version: 1.0.0
+skills:
+  - id: ledger-assistant
+    path: skills/ledger-assistant/SKILL.md
+    summary: 读取已授权账目与预算摘要，并创建等待 Ledger 用户审核的记账草案
+    capabilities:
+      - ledger.summary.read
+      - ledger.records.read
+      - ledger.budgets.read
+      - ledger.records.draft
+    invocation:
+      model: true
+      user: true
+capabilities:
+  - id: ledger.summary.read
+    summary: 读取已授权 Ledger 工作区中指定月份和币种的金额摘要
+    audience: ledger
+    scopes: [ledger.summary.read]
+    tools:
+      - name: ledger.summary.get
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: get_agent_summary
+        exposure: on-demand
+        result_mode: full
+        max_result_bytes: 4096
+        max_model_chars: 1200
+        timeout_ms: 10000
+        concurrency_safe: true
+        retry_policy: idempotent
+    effect: read
+    data_classification: sensitive
+    risk_level: L0
+    confirmation: none
+    reversible: true
+    resource_grant_required: true
+    idempotency_required: false
+  - id: ledger.records.read
+    summary: 读取已授权 Ledger 工作区中最小披露的确认账目列表
+    audience: ledger
+    scopes: [ledger.records.read]
+    tools:
+      - name: ledger.records.list
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: list_agent_records
+        exposure: on-demand
+        result_mode: full
+        max_result_bytes: 65536
+        max_model_chars: 12000
+        timeout_ms: 10000
+        concurrency_safe: true
+        retry_policy: idempotent
+    effect: read
+    data_classification: sensitive
+    risk_level: L0
+    confirmation: none
+    reversible: true
+    resource_grant_required: true
+    idempotency_required: false
+  - id: ledger.budgets.read
+    summary: 读取已授权 Ledger 工作区的月度预算目标与进度
+    audience: ledger
+    scopes: [ledger.budgets.read]
+    tools:
+      - name: ledger.budgets.list
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: list_agent_budgets
+        exposure: on-demand
+        result_mode: full
+        max_result_bytes: 32768
+        max_model_chars: 8000
+        timeout_ms: 10000
+        concurrency_safe: true
+        retry_policy: idempotent
+    effect: read
+    data_classification: sensitive
+    risk_level: L0
+    confirmation: none
+    reversible: true
+    resource_grant_required: true
+    idempotency_required: false
+  - id: ledger.records.draft
+    summary: 在已授权 Ledger 工作区创建可撤销且等待用户确认的记账草案
+    audience: ledger
+    scopes: [ledger.records.draft]
+    tools:
+      - name: ledger.records.draft
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: create_agent_record_draft
+        exposure: on-demand
+        result_mode: full
+        max_result_bytes: 4096
+        max_model_chars: 1200
+        timeout_ms: 15000
+        concurrency_safe: false
+        retry_policy: idempotent
+    effect: draft
+    data_classification: sensitive
+    risk_level: L1
+    confirmation: notify
+    reversible: true
+    resource_grant_required: true
+    idempotency_required: true

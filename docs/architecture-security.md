@@ -103,6 +103,12 @@ Host 只能从可信 allowlist 选择，不能根据任意 `Host`/`X-Forwarded-H
 - Token 支持双 key 轮换窗口和最后使用审计；
 - v1 默认不授予任何客户端确认正式事实的 scope。
 
+Shadow Agent 使用与通用服务 Token 分离的 registry 和 secrets 目录。鉴权固定 `ledger`
+audience，并同时检查 capability scope 与 `ledger_agent_grants` 中的工作区级权限。一个 Agent
+凭据只映射一个 Ledger owner；无 grant 返回 404，grant 未开放具体动作返回 403。读取和草稿
+审计只记录 agent ID、动作、月份、币种、结果数量与资源引用等允许列表元数据，不记录金额、
+标题、备注、消费原文、Bearer 或请求体。
+
 ## 7. Web 安全
 
 - Cookie 写请求同时校验 Origin 与 CSRF token；

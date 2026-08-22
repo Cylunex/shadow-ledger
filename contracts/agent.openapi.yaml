@@ -1,0 +1,218 @@
+openapi: 3.1.0
+info:
+  title: Shadow Ledger Agent API
+  version: 1.0.0
+servers:
+  - url: https://ledger.example.com
+paths:
+  /api/machine/v1/agent/summary:
+    get:
+      operationId: get_agent_summary
+      summary: Get a monthly financial summary from the granted Ledger workspace
+      parameters:
+        - $ref: "#/components/parameters/Month"
+        - $ref: "#/components/parameters/Currency"
+      responses:
+        "200":
+          description: Monthly summary without account or payment data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentSummary"
+  /api/machine/v1/agent/records:
+    get:
+      operationId: list_agent_records
+      summary: List minimally disclosed confirmed records from the granted Ledger workspace
+      parameters:
+        - $ref: "#/components/parameters/Month"
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 25 }
+      responses:
+        "200":
+          description: Bounded confirmed record facts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRecordList"
+  /api/machine/v1/agent/budgets:
+    get:
+      operationId: list_agent_budgets
+      summary: List monthly budget progress from the granted Ledger workspace
+      parameters:
+        - $ref: "#/components/parameters/Month"
+      responses:
+        "200":
+          description: Budget targets and progress grouped by their stored currency
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentBudgetList"
+  /api/machine/v1/agent/drafts:
+    post:
+      operationId: create_agent_record_draft
+      summary: Create a reversible money record draft for later user confirmation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentRecordDraftCreate"
+      responses:
+        "201":
+          description: Reversible pending Ledger record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRecordDraftCreated"
+components:
+  parameters:
+    Month:
+      name: month
+      in: query
+      required: false
+      schema:
+        type: string
+        pattern: "^[0-9]{4}-(0[1-9]|1[0-2])$"
+    Currency:
+      name: currency
+      in: query
+      required: false
+      schema:
+        type: string
+        pattern: "^[A-Za-z]{3}$"
+        default: CNY
+  schemas:
+    MoneyValue:
+      type: string
+      pattern: "^-?[0-9]+(?:\\.[0-9]{1,4})?$"
+    OptionalString:
+      anyOf:
+        - { type: string }
+        - { type: "null" }
+    OptionalMoneyValue:
+      anyOf:
+        - $ref: "#/components/schemas/MoneyValue"
+        - { type: "null" }
+    AgentSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - month
+        - currency
+        - expense
+        - income
+        - refund
+        - net_spending
+        - generated_at
+        - exchange_rate_applied
+      properties:
+        month: { type: string }
+        currency: { type: string }
+        expense: { $ref: "#/components/schemas/MoneyValue" }
+        income: { $ref: "#/components/schemas/MoneyValue" }
+        refund: { $ref: "#/components/schemas/MoneyValue" }
+        net_spending: { $ref: "#/components/schemas/MoneyValue" }
+        generated_at: { type: string, format: date-time }
+        exchange_rate_applied: { const: false }
+    AgentRecordSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - record_ref
+        - occurred_at
+        - record_kind
+        - money_type
+        - amount
+        - currency
+        - category_key
+        - scene
+      properties:
+        record_ref:
+          type: string
+          pattern: "^shadow://ledger/records/"
+        occurred_at: { type: string, format: date-time }
+        record_kind: { enum: [money_only, consumption] }
+        money_type:
+          anyOf:
+            - { enum: [expense, income, refund] }
+            - { type: "null" }
+        amount: { $ref: "#/components/schemas/OptionalMoneyValue" }
+        currency: { $ref: "#/components/schemas/OptionalString" }
+        category_key: { $ref: "#/components/schemas/OptionalString" }
+        scene: { $ref: "#/components/schemas/OptionalString" }
+    AgentRecordList:
+      type: object
+      additionalProperties: false
+      required: [month, items, truncated]
+      properties:
+        month: { type: string }
+        items:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/AgentRecordSummary"
+        truncated: { type: boolean }
+    AgentBudgetSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - budget_ref
+        - category_key
+        - monthly_amount
+        - currency
+        - net_spending
+        - remaining
+      properties:
+        budget_ref:
+          type: string
+          pattern: "^shadow://ledger/budget-targets/"
+        category_key: { $ref: "#/components/schemas/OptionalString" }
+        monthly_amount: { $ref: "#/components/schemas/MoneyValue" }
+        currency: { type: string }
+        net_spending: { $ref: "#/components/schemas/MoneyValue" }
+        remaining: { $ref: "#/components/schemas/MoneyValue" }
+    AgentBudgetList:
+      type: object
+      additionalProperties: false
+      required: [month, items, unknown_amount_records, exchange_rate_applied]
+      properties:
+        month: { type: string }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentBudgetSummary"
+        unknown_amount_records: { type: integer, minimum: 0 }
+        exchange_rate_applied: { const: false }
+    AgentRecordDraftCreate:
+      type: object
+      additionalProperties: false
+      required: [occurred_at, money_type, amount, currency]
+      properties:
+        occurred_at: { type: string, format: date-time }
+        timezone: { type: string, minLength: 1, maxLength: 64, default: Asia/Shanghai }
+        money_type: { enum: [expense, income, refund] }
+        amount:
+          type: string
+          pattern: "^[0-9]+(?:\\.[0-9]{1,4})?$"
+        currency:
+          type: string
+          pattern: "^[A-Za-z]{3}$"
+        category_key:
+          anyOf:
+            - { type: string, pattern: "^[a-z][a-z0-9_-]{0,49}$" }
+            - { type: "null" }
+        title: { type: string, maxLength: 160, default: "" }
+    AgentRecordDraftCreated:
+      type: object
+      additionalProperties: false
+      required: [record_ref, state, revision, reversible, final_entry_created]
+      properties:
+        record_ref:
+          type: string
+          pattern: "^shadow://ledger/records/"
+        state: { const: draft }
+        revision: { type: integer, minimum: 1 }
+        reversible: { const: true }
+        final_entry_created: { const: false }

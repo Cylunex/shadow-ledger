@@ -225,5 +225,16 @@ ledger.confirm       默认不授予 Agent
 ledger.integrations
 ```
 
-v1 不发布 Agent Tools。未来 Agent 默认只能读取和创建 draft；确认正式事实必须由用户动作或
-显式授予 `ledger.confirm` 的受控客户端完成。
+Shadow Agent 使用独立 `/api/machine/v1/agent` 合同，不复用浏览器 Session 或通用服务 Token：
+
+| 方法 | 路径 | capability | 说明 |
+|---|---|---|---|
+| GET | `/summary` | `ledger.summary.read` | 按月、币种读取金额摘要，不做汇率换算 |
+| GET | `/records` | `ledger.records.read` | 读取最小化确认账目，不返回备注、商家原文和支付信息 |
+| GET | `/budgets` | `ledger.budgets.read` | 读取月度预算目标与净支出进度 |
+| POST | `/drafts` | `ledger.records.draft` | 幂等创建可撤销 money-only 草案 |
+
+每次请求依次校验独立 Bearer audience、scope 与 owner 级 grant。草案不接受账户、支付方式、
+汇率或 `confirm` 字段，金额使用 Decimal，币种和 IANA timezone 由确定性代码验证。正式确认仍
+只能由 Ledger 用户会话或未来受控确认合同完成；普通 `shadow-ledger` Profile 不注册正式入账、
+导出、难撤销调整或资金执行能力。

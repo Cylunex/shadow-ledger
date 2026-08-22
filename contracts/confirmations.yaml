@@ -1,0 +1,14 @@
+version: 1
+confirmations:
+  - capability: ledger.summary.read
+    mode: none
+    receipt_required: false
+  - capability: ledger.records.read
+    mode: none
+    receipt_required: false
+  - capability: ledger.budgets.read
+    mode: none
+    receipt_required: false
+  - capability: ledger.records.draft
+    mode: notify
+    receipt_required: false
