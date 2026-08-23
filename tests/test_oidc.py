@@ -77,6 +77,21 @@ def test_callback_allowlist_is_exact():
         raise AssertionError("untrusted host was accepted")
 
 
+def test_prefixed_lan_callback_uses_exact_allowlist_entry():
+    settings = Settings(
+        **{
+            **oidc_settings().model_dump(),
+            "oidc_callbacks": [
+                "https://ledger.example.invalid/auth/callback",
+                "https://nas.example.invalid:55443/ledger/auth/callback",
+            ],
+        }
+    )
+    request = request_for("https://nas.example.invalid:55443/login")
+    request.scope["x_forwarded_prefix"] = "/ledger"
+    assert exact_redirect_uri(request, settings) == settings.oidc_callbacks[1]
+
+
 def test_id_token_validates_signature_issuer_audience_nonce_fields(monkeypatch):
     settings = oidc_settings()
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)

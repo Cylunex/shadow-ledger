@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.errors import AppError
+from app.external import prefixed
 from app.models import BrowserSession, LocalIdentity, OidcTransaction
 from app.security import CSRF_COOKIE, SESSION_COOKIE, digest, new_csrf_token
 
@@ -53,7 +54,7 @@ def as_utc(value: datetime) -> datetime:
 
 def exact_redirect_uri(request: Request, settings: Settings) -> str:
     current_origin = f"{request.url.scheme}://{request.url.netloc}"
-    candidate = f"{current_origin}/auth/callback"
+    candidate = f"{current_origin}{prefixed(request, '/auth/callback')}"
     if candidate not in settings.oidc_callbacks:
         raise AppError(400, "untrusted_callback", "当前入口未注册登录回调")
     return candidate
@@ -238,7 +239,7 @@ def callback(
         )
     )
     db.commit()
-    response = RedirectResponse(transaction.return_to, status_code=303)
+    response = RedirectResponse(prefixed(request, transaction.return_to), status_code=303)
     response.set_cookie(
         SESSION_COOKIE,
         handle,
@@ -271,7 +272,7 @@ def logout(request: Request, db: Session = Depends(get_db)):
         if session:
             session.revoked_at = datetime.now(UTC)
             db.commit()
-    response = RedirectResponse("/", status_code=303)
+    response = RedirectResponse(prefixed(request, "/"), status_code=303)
     response.delete_cookie(SESSION_COOKIE, secure=True, httponly=True, samesite="lax", path="/")
     response.delete_cookie(CSRF_COOKIE, secure=True, httponly=False, samesite="lax", path="/")
     return response

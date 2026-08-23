@@ -21,6 +21,7 @@ from app.api import router as api_router
 from app.config import Settings, get_settings
 from app.db import database_ready, init_database
 from app.errors import AppError, app_error_handler
+from app.external import external_prefix
 from app.machine import router as machine_router
 from app.oidc import router as oidc_router
 from app.security import validate_csrf
@@ -68,6 +69,13 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
     app.include_router(api_router)
     app.include_router(machine_router)
     app.add_exception_handler(AppError, app_error_handler)
+
+    @app.middleware("http")
+    async def forwarded_prefix(request: Request, call_next):
+        value = request.headers.get("X-Forwarded-Prefix", "").strip()
+        if value.startswith("/") and value != "/":
+            request.scope["x_forwarded_prefix"] = value.rstrip("/")
+        return await call_next(request)
 
     @app.middleware("http")
     async def safety_headers(request: Request, call_next):
@@ -118,19 +126,35 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
 
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request):
-        return templates.TemplateResponse(request, "index.html", {"page": "records"})
+        return templates.TemplateResponse(
+            request,
+            "index.html",
+            {"page": "records", "prefix": external_prefix(request)},
+        )
 
     @app.get("/consumption", response_class=HTMLResponse)
     def consumption(request: Request):
-        return templates.TemplateResponse(request, "index.html", {"page": "consumption"})
+        return templates.TemplateResponse(
+            request,
+            "index.html",
+            {"page": "consumption", "prefix": external_prefix(request)},
+        )
 
     @app.get("/planning", response_class=HTMLResponse)
     def planning(request: Request):
-        return templates.TemplateResponse(request, "index.html", {"page": "planning"})
+        return templates.TemplateResponse(
+            request,
+            "index.html",
+            {"page": "planning", "prefix": external_prefix(request)},
+        )
 
     @app.get("/insights", response_class=HTMLResponse)
     def insights(request: Request):
-        return templates.TemplateResponse(request, "index.html", {"page": "insights"})
+        return templates.TemplateResponse(
+            request,
+            "index.html",
+            {"page": "insights", "prefix": external_prefix(request)},
+        )
 
     return app
 
