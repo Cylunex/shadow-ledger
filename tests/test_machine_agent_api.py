@@ -100,6 +100,15 @@ def _authorization() -> dict[str, str]:
     return {"Authorization": f"Bearer {TOKEN}"}
 
 
+def test_machine_api_accepts_loopback_host_in_production(agent_app_factory) -> None:
+    with agent_app_factory(("ledger.summary.read",)) as (client, _app):
+        response = client.get(
+            "/api/machine/v1/agent/summary",
+            headers={**_authorization(), "Host": "127.0.0.1:8000"},
+        )
+    assert response.status_code == 200
+
+
 def _seed_financial_facts() -> None:
     assert database.SessionLocal is not None
     occurred_at = datetime(2026, 8, 10, 8, 30, tzinfo=UTC)
