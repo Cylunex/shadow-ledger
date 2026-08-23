@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.errors import AppError
+from app.external import is_lan_bypass, is_same_external_origin
 from app.models import BrowserSession, LocalIdentity
 
 SESSION_COOKIE = "__Host-ledger-session"
@@ -56,6 +57,16 @@ def current_actor(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> Actor:
+    if is_lan_bypass(request):
+        identity = db.scalar(
+            select(LocalIdentity)
+            .where(LocalIdentity.enabled.is_(True))
+            .order_by(LocalIdentity.created_at.asc())
+            .limit(1)
+        )
+        if identity is None:
+            raise AppError(503, "lan_identity_unavailable", "局域网身份尚未初始化")
+        return Actor(owner_id=f"{identity.issuer}|{identity.subject}")
     if settings.dev_auth and settings.env != "production":
         owner = request.headers.get("X-Dev-User", "dev-user")
         return Actor(owner_id=owner)
@@ -98,6 +109,10 @@ def require_scope(scope: str):
 def validate_csrf(request: Request, settings: Settings) -> None:
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return
+    if is_lan_bypass(request):
+        if is_same_external_origin(request):
+            return
+        raise AppError(403, "invalid_origin", "请求来源不受信任")
     if settings.dev_auth and settings.env != "production":
         return
     if request.headers.get("Authorization", "").startswith("Bearer "):

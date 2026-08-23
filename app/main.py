@@ -54,6 +54,7 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
         {urlsplit(url).hostname for url in settings.oidc_callbacks if urlsplit(url).hostname}
     )
     allowed_hosts.extend(["localhost", "127.0.0.1"])
+    allowed_hosts.extend(settings.lan_bypass_hosts)
     if settings.env != "production":
         allowed_hosts.append("testserver")
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts or ["testserver"])

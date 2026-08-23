@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.errors import AppError
-from app.external import prefixed
+from app.external import is_lan_bypass, prefixed
 from app.models import BrowserSession, LocalIdentity, OidcTransaction
 from app.security import CSRF_COOKIE, SESSION_COOKIE, digest, new_csrf_token
 
@@ -80,6 +80,8 @@ def login(
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
+    if is_lan_bypass(request):
+        return RedirectResponse(prefixed(request, "/"), status_code=303)
     metadata = discovery(settings)
     redirect_uri = exact_redirect_uri(request, settings)
     state = secrets.token_urlsafe(32)

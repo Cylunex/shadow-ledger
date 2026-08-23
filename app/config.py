@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     agent_registry_path: Path | None = None
     agent_secrets_dir: Path | None = None
     trusted_proxies: list[str] = Field(default_factory=list)
+    lan_bypass_hosts: list[str] = Field(default_factory=list)
     dev_auth: bool = False
     max_request_bytes: int = 2_000_000
     worker_poll_seconds: float = 1.0
@@ -48,7 +49,7 @@ class Settings(BaseSettings):
             raise ValueError("default_currency must be a three-letter code")
         return value
 
-    @field_validator("oidc_callbacks", "allowed_origins", mode="before")
+    @field_validator("oidc_callbacks", "allowed_origins", "lan_bypass_hosts", mode="before")
     @classmethod
     def parse_list(cls, value: object) -> object:
         if isinstance(value, str):
