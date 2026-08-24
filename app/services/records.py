@@ -168,6 +168,7 @@ def create_record(
     idempotency_key: str,
     actor_id: str,
     actor_type: str = "user",
+    commit: bool = True,
 ) -> LedgerRecord:
     existing = idempotency_lookup(
         db, owner_id, "records.create", idempotency_key, data.model_dump()
@@ -204,8 +205,11 @@ def create_record(
         )
     )
     idempotency_save(db, owner_id, "records.create", idempotency_key, data.model_dump(), record.id)
-    db.commit()
-    return get_record(db, owner_id, record.id)
+    if commit:
+        db.commit()
+        return get_record(db, owner_id, record.id)
+    db.flush()
+    return record
 
 
 def record_query():

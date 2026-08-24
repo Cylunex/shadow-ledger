@@ -16,7 +16,8 @@ Shadow Ledger 是以消费为中心的个人收支记录与规划系统。它同
 - 消费明细、商家与商品身份；
 - 时间线、消费、计划和洞察页面；
 - Spending Intent、周期事项和分类目标；
-- CSV/JSON 导入导出、Asset 附件与解析草稿；
+- CSV/JSON 导入导出，京东、淘宝、美团、饿了么 Markdown 账单导入；
+- Asset 附件、解析草稿与来源级幂等去重；
 - OIDC、审计、Outbox 和后台 Worker。
 
 ## 本地开发

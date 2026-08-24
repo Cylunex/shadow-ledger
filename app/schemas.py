@@ -212,14 +212,25 @@ class ReferenceCreate(StrictModel):
         return value
 
 
-class ImportPreview(StrictModel):
-    format: Literal["json", "csv"]
+class ImportSourceInput(StrictModel):
+    format: Literal["json", "csv", "markdown"]
     content: str = Field(max_length=1_000_000)
 
 
+class ImportPreview(ImportSourceInput):
+    pass
+
+
 class ImportCommit(StrictModel):
-    records: list[RecordCreate] = Field(max_length=1000)
+    records: list[RecordCreate] = Field(default_factory=list, max_length=1000)
+    source: ImportSourceInput | None = None
     external_id: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def has_one_input(self) -> ImportCommit:
+        if bool(self.records) == bool(self.source):
+            raise ValueError("provide either records or source")
+        return self
 
 
 class AssetInit(StrictModel):

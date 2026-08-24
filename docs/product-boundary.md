@@ -42,7 +42,7 @@ Planning & Insights
 - 想买、想吃和一般消费计划；
 - 订阅、会员、固定支出/收入等周期承诺；
 - 到期提醒和“由计划生成草稿”，不自动确认；
-- JSON/CSV 导入导出；
+- JSON/CSV 导入导出，以及受支持平台的 Markdown 账单草稿导入；
 - Platform 原生 OIDC、服务鉴权和 Asset 引用；
 - Health、Travel、Foliant 的不透明引用合同。
 

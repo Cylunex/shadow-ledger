@@ -114,8 +114,16 @@ occurred_from, occurred_to, amount_min, amount_max, query
 | POST | `/capture/assets/complete` | 完成 Asset、创建绑定和解析 Job |
 | GET | `/capture-sources/{id}` | 查看解析状态、错误和生成草稿 |
 | POST | `/capture-sources/{id}/retry` | 用指定 parser version 重试 |
-| POST | `/imports/preview` | CSV/JSON 映射与去重预览 |
+| POST | `/imports/preview` | CSV/JSON 结构预览；平台 Markdown 账单映射与异常预览 |
 | POST | `/imports/commit` | 幂等创建批量草稿 |
+
+平台 Markdown 账单支持京东、淘宝、美团和饿了么，服务端依据表头识别来源。预览请求使用
+`{"format":"markdown","content":"..."}`；确认导入时将同一对象放入 `source` 字段。提交仍需
+`Idempotency-Key`，并额外以平台订单号生成的不可逆指纹逐单去重，因此重叠账期不会重复建草稿。
+旧的结构化 `records` 提交合同保持兼容。
+
+导入器只创建 draft。订单实付金额写入 `MoneyEntry.amount`，商品金额只作明细；支付方式不进入
+领域模型。无法可靠关联原单的退款保持独立退款草稿，并在预览中提示。
 
 `/capture/assets/init` 只转交 Platform 返回的受控 canonical/alternate targets，不接受客户端提供
 任意上传主机。`/complete` 请求只携带 Ledger upload ID，不回传服务凭据。

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.errors import AppError
+from app.importers import PARSER_VERSION, ParsedImport, parse_markdown_import
 from app.integrations import AssetClient
 from app.models import (
     AssetBinding,
@@ -289,13 +290,16 @@ DEFAULT_CATEGORIES = (
 
 
 def ensure_categories(db: Session, owner_id: str) -> None:
-    if db.scalar(
-        select(func.count()).select_from(MoneyCategory).where(MoneyCategory.owner_id == owner_id)
-    ):
-        return
+    existing = set(
+        db.scalars(select(MoneyCategory.key).where(MoneyCategory.owner_id == owner_id))
+    )
+    added = False
     for order, (key, name) in enumerate(DEFAULT_CATEGORIES):
-        db.add(MoneyCategory(owner_id=owner_id, key=key, name=name, sort_order=order))
-    db.commit()
+        if key not in existing:
+            db.add(MoneyCategory(owner_id=owner_id, key=key, name=name, sort_order=order))
+            added = True
+    if added:
+        db.commit()
 
 
 @router.get("/categories")
@@ -595,6 +599,27 @@ def asset_complete(
 
 @router.post("/imports/preview")
 def imports_preview(data: ImportPreview, actor: Actor = Depends(current_actor)):
+    if data.format == "markdown":
+        try:
+            parsed = parse_markdown_import(data.content)
+        except ValueError as exc:
+            raise AppError(422, "invalid_import", str(exc)) from exc
+        return {
+            "platform": parsed.platform,
+            "row_count": parsed.row_count,
+            "record_count": len(parsed.candidates),
+            "skipped_count": parsed.skipped_count,
+            "columns": list(parsed.columns),
+            "warnings": list(parsed.warnings),
+            "items": [
+                {
+                    "source_external_id": item.source_external_id,
+                    "record": jsonable(item.record.model_dump()),
+                    "warnings": list(item.warnings),
+                }
+                for item in parsed.candidates
+            ],
+        }
     try:
         if data.format == "json":
             import json
@@ -615,6 +640,56 @@ def imports_preview(data: ImportPreview, actor: Actor = Depends(current_actor)):
     }
 
 
+def _existing_import_record_ids(db: Session, source_id: uuid.UUID) -> list[str]:
+    links = db.scalars(
+        select(LedgerRecordSource).where(LedgerRecordSource.source_id == source_id)
+    )
+    return [str(link.record_id) for link in links]
+
+
+def _commit_markdown_import(
+    db: Session, actor: Actor, parsed: ParsedImport
+) -> tuple[list[str], int]:
+    ids: list[str] = []
+    duplicate_count = 0
+    for candidate in parsed.candidates:
+        existing = db.scalar(
+            select(CaptureSource).where(
+                CaptureSource.owner_id == actor.owner_id,
+                CaptureSource.source_type == "import",
+                CaptureSource.source_external_id == candidate.source_external_id,
+            )
+        )
+        if existing:
+            existing_ids = _existing_import_record_ids(db, existing.id)
+            ids.extend(existing_ids)
+            duplicate_count += 1
+            continue
+        source = CaptureSource(
+            owner_id=actor.owner_id,
+            source_type="import",
+            source_external_id=candidate.source_external_id,
+            raw_payload=candidate.raw_payload,
+            parser=f"{parsed.platform}-markdown",
+            parser_version=PARSER_VERSION,
+            capture_state="parsed",
+        )
+        db.add(source)
+        db.flush()
+        record = create_record(
+            db,
+            actor.owner_id,
+            candidate.record,
+            f"import:{candidate.source_external_id}",
+            actor_id(actor),
+            commit=False,
+        )
+        db.add(LedgerRecordSource(record_id=record.id, source_id=source.id, role="import"))
+        ids.append(str(record.id))
+    db.commit()
+    return ids, duplicate_count
+
+
 @router.post("/imports/commit", status_code=201)
 def imports_commit(
     data: ImportCommit,
@@ -624,6 +699,23 @@ def imports_commit(
 ):
     if not idempotency_key:
         raise AppError(400, "idempotency_key_required", "必须提供 Idempotency-Key")
+    if data.source:
+        if data.source.format != "markdown":
+            raise AppError(422, "unsupported_import_commit", "原始内容提交目前仅支持 Markdown")
+        try:
+            parsed = parse_markdown_import(data.source.content)
+        except ValueError as exc:
+            raise AppError(422, "invalid_import", str(exc)) from exc
+        ensure_categories(db, actor.owner_id)
+        ids, duplicate_count = _commit_markdown_import(db, actor, parsed)
+        return {
+            "record_ids": ids,
+            "platform": parsed.platform,
+            "created_count": len(parsed.candidates) - duplicate_count,
+            "duplicate_count": duplicate_count,
+            "skipped_count": parsed.skipped_count,
+            "replayed": bool(parsed.candidates) and duplicate_count == len(parsed.candidates),
+        }
     source = db.scalar(
         select(CaptureSource).where(
             CaptureSource.owner_id == actor.owner_id,
@@ -632,10 +724,10 @@ def imports_commit(
         )
     )
     if source:
-        links = db.scalars(
-            select(LedgerRecordSource).where(LedgerRecordSource.source_id == source.id)
-        )
-        return {"record_ids": [str(link.record_id) for link in links], "replayed": True}
+        return {
+            "record_ids": _existing_import_record_ids(db, source.id),
+            "replayed": True,
+        }
     source = CaptureSource(
         owner_id=actor.owner_id,
         source_type="import",
@@ -651,7 +743,12 @@ def imports_commit(
     for index, record_data in enumerate(data.records):
         record_data = record_data.model_copy(update={"confirm": False})
         record = create_record(
-            db, actor.owner_id, record_data, f"{idempotency_key}:{index}", actor_id(actor)
+            db,
+            actor.owner_id,
+            record_data,
+            f"{idempotency_key}:{index}",
+            actor_id(actor),
+            commit=False,
         )
         db.add(LedgerRecordSource(record_id=record.id, source_id=source.id, role="import"))
         ids.append(str(record.id))

@@ -74,7 +74,7 @@
 - AssetBinding/Reference Outbox 与对账；
 - OCR/可选 AI parser port、Capture Job、失败重试；
 - 截图/小票草稿确认；
-- CSV/JSON 预览、列映射、疑似重复和批量草稿；
+- CSV/JSON 预览，以及京东、淘宝、美团、饿了么 Markdown 账单映射、去重和批量草稿；
 - CSV 导出及完整导出 Job。
 
 验收：
