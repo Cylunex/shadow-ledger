@@ -46,6 +46,7 @@ from app.schemas import (
     AliasCreate,
     AssetComplete,
     AssetInit,
+    BatchConfirm,
     BudgetCreate,
     CategoryCreate,
     CategoryPatch,
@@ -67,6 +68,7 @@ from app.security import Actor, current_actor, require_scope
 from app.services.records import (
     add_money_entry,
     confirm_record,
+    confirm_records,
     create_record,
     delete_draft,
     get_record,
@@ -234,6 +236,24 @@ def records_confirm(
     record = confirm_record(db, actor.owner_id, record_id, parse_etag(if_match), actor_id(actor))
     etag(response, record.revision)
     return serialize_record(db, record)
+
+
+@router.post("/records/batch-confirm")
+def records_batch_confirm(
+    data: BatchConfirm,
+    actor: Actor = Depends(require_scope("ledger.confirm")),
+    db: Session = Depends(get_db),
+):
+    records = confirm_records(
+        db,
+        actor.owner_id,
+        [(item.id, item.revision) for item in data.records],
+        actor_id(actor),
+    )
+    return {
+        "confirmed_count": len(records),
+        "record_ids": [str(record.id) for record in records],
+    }
 
 
 @router.post("/records/{record_id}/void")

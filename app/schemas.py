@@ -98,6 +98,22 @@ class RecordPatch(StrictModel):
     correction_reason: str | None = Field(default=None, max_length=1000)
 
 
+class RecordVersionInput(StrictModel):
+    id: uuid.UUID
+    revision: int = Field(ge=1)
+
+
+class BatchConfirm(StrictModel):
+    records: list[RecordVersionInput] = Field(min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def unique_records(self) -> BatchConfirm:
+        ids = [record.id for record in self.records]
+        if len(ids) != len(set(ids)):
+            raise ValueError("record ids must be unique")
+        return self
+
+
 class TextCaptureCreate(StrictModel):
     text: str = Field(min_length=1, max_length=10000)
     external_id: str | None = Field(default=None, max_length=500)

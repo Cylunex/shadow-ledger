@@ -29,6 +29,18 @@ def test_health_and_readiness(client):
     assert response.headers["x-content-type-options"] == "nosniff"
 
 
+def test_draft_review_actions_are_present_in_browser_ui(client):
+    page = client.get("/")
+    script = client.get("/static/app.js?v=20260825-draft-confirm")
+
+    assert page.status_code == script.status_code == 200
+    assert 'id="batch-confirm"' in page.text
+    assert "app.js?v=20260825-draft-confirm" in page.text
+    assert "确认入账" in script.text
+    assert "全部确认入账" in script.text
+    assert "/records/batch-confirm" in script.text
+
+
 def test_empty_insight_endpoints_are_stable(client):
     headers = {"X-Dev-User": "alice"}
     for path in ("/insights/scenes", "/insights/merchants", "/insights/items"):
@@ -81,6 +93,57 @@ def test_idempotency_replay_and_payload_mismatch(client, idempotent_headers):
     )
     assert changed.status_code == 409
     assert changed.json()["error"]["code"] == "idempotency_mismatch"
+
+
+def test_batch_confirm_is_atomic_and_revision_checked(client, write_headers):
+    drafts = [
+        client.post(
+            "/api/v1/records",
+            json=money_payload(str(amount)),
+            headers={**write_headers, "Idempotency-Key": f"batch-draft-{amount}"},
+        ).json()
+        for amount in (31, 32)
+    ]
+    confirmed = client.post(
+        "/api/v1/records/batch-confirm",
+        json={"records": [{"id": row["id"], "revision": row["revision"]} for row in drafts]},
+        headers=write_headers,
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["confirmed_count"] == 2
+    for row in drafts:
+        current = client.get(
+            f"/api/v1/records/{row['id']}", headers={"X-Dev-User": "alice"}
+        ).json()
+        assert current["state"] == "confirmed"
+        assert current["revision"] == 2
+
+    conflicted_drafts = [
+        client.post(
+            "/api/v1/records",
+            json=money_payload(str(amount)),
+            headers={**write_headers, "Idempotency-Key": f"conflict-draft-{amount}"},
+        ).json()
+        for amount in (41, 42)
+    ]
+    conflict = client.post(
+        "/api/v1/records/batch-confirm",
+        json={
+            "records": [
+                {"id": conflicted_drafts[0]["id"], "revision": 1},
+                {"id": conflicted_drafts[1]["id"], "revision": 99},
+            ]
+        },
+        headers=write_headers,
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "revision_conflict"
+    for row in conflicted_drafts:
+        current = client.get(
+            f"/api/v1/records/{row['id']}", headers={"X-Dev-User": "alice"}
+        ).json()
+        assert current["state"] == "draft"
+        assert current["revision"] == 1
 
 
 def test_unknown_amount_consumption_can_be_confirmed_then_completed(client, write_headers):

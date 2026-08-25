@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>Shadow Ledger</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css">
-  <script src="{{ prefix }}/static/app.js" defer></script>
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260825">
+  <script src="{{ prefix }}/static/app.js?v=20260825-draft-confirm" defer></script>
 </head>
 <body data-page="{{ page }}" data-prefix="{{ prefix }}">
   <a class="skip" href="#main">跳到主要内容</a>
@@ -29,7 +29,7 @@
         <button class="primary" type="submit">记录</button><p id="form-status" role="status"></p>
       </form>
       <div class="shortcuts"><button id="text-capture">说一句</button><button id="asset-capture">扫截图</button><button id="bill-import">导入账单</button><button id="copy-last">复制上次</button></div>
-      <section><div class="section-title"><h2>最近记录</h2><button id="refresh">刷新</button></div><div id="timeline" class="timeline" aria-live="polite"></div></section>
+      <section><div class="section-title"><h2 id="timeline-title">最近记录</h2><div><button id="batch-confirm" class="quiet" type="button" hidden>确认这批</button> <button id="refresh" type="button">刷新</button></div></div><div id="timeline" class="timeline" aria-live="polite"></div></section>
     </section>
     <section id="consumption-page" class="page"><h2>消费</h2><p class="muted">按场景回看消费内容、原始商家与体验。</p><div id="scene-cards" class="card-grid"></div><h3>常去商家</h3><div id="merchant-list" class="list"></div><h3>常买内容</h3><div id="item-list" class="list"></div></section>
     <section id="planning-page" class="page"><h2>计划</h2><div class="tabs"><button data-plan="intents" class="active">想要</button><button data-plan="commitments">周期</button><button data-plan="reminders">提醒</button></div><div id="planning-list" class="list"></div><button id="add-plan" class="primary">添加计划</button></section>

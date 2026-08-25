@@ -358,15 +358,19 @@ def parse_etag(value: str | None) -> int:
         raise AppError(400, "invalid_if_match", "If-Match 格式无效") from exc
 
 
-def _confirm_locked(
-    db: Session, record: LedgerRecord, actor_id: str, actor_type: str = "user"
-) -> None:
+def _validate_confirmable(record: LedgerRecord, state_message: str = "只有草稿可以确认") -> None:
     if record.state != "draft":
-        raise AppError(409, "invalid_state_transition", "只有草稿可以确认")
+        raise AppError(409, "invalid_state_transition", state_message)
     if record.record_kind == "consumption" and record.consumption is None:
         raise AppError(422, "record_invariant_failed", "消费记录必须包含消费事件")
     if record.record_kind == "money_only" and record.consumption is not None:
         raise AppError(422, "record_invariant_failed", "纯金额记录不能包含消费事件")
+
+
+def _confirm_locked(
+    db: Session, record: LedgerRecord, actor_id: str, actor_type: str = "user"
+) -> None:
+    _validate_confirmable(record)
     timestamp = datetime.now(UTC)
     record.state = "confirmed"
     record.confirmed_at = timestamp
@@ -390,6 +394,34 @@ def _confirm_locked(
             aggregate_id=record.id,
         )
     )
+
+
+def confirm_records(
+    db: Session,
+    owner_id: str,
+    versions: list[tuple[uuid.UUID, int]],
+    actor_id: str,
+    actor_type: str = "user",
+) -> list[LedgerRecord]:
+    record_ids = [record_id for record_id, _ in versions]
+    records = list(
+        db.scalars(
+            record_query()
+            .where(LedgerRecord.id.in_(record_ids), LedgerRecord.owner_id == owner_id)
+            .with_for_update()
+        )
+    )
+    by_id = {record.id: record for record in records}
+    if len(by_id) != len(record_ids):
+        raise AppError(404, "record_not_found", "批量确认包含不存在的草稿")
+    ordered = [by_id[record_id] for record_id in record_ids]
+    for record, (_, revision) in zip(ordered, versions, strict=True):
+        _check_revision(record, revision)
+        _validate_confirmable(record, "批量确认只能包含草稿")
+    for record in ordered:
+        _confirm_locked(db, record, actor_id, actor_type)
+    db.commit()
+    return ordered
 
 
 def confirm_record(

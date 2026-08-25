@@ -49,6 +49,7 @@ OIDC Token 不返回浏览器；浏览器只持有 `Secure + HttpOnly + SameSite
 | GET | `/records/{id}` | 获取完整聚合 |
 | PATCH | `/records/{id}` | 修改 draft 或修正确认记录 |
 | POST | `/records/{id}/confirm` | 原子确认 |
+| POST | `/records/batch-confirm` | 携带逐条 revision，单事务确认最多 1000 条 draft |
 | POST | `/records/{id}/void` | 原子撤销 confirmed 记录 |
 | POST | `/records/{id}/money-entry` | 给金额未知的消费补金额 |
 | DELETE | `/records/{id}` | 仅删除 draft；已确认记录必须 void |
@@ -104,6 +105,15 @@ occurred_from, occurred_to, amount_min, amount_max, query
 
 默认只返回 confirmed；界面草稿箱显式请求 `state=draft`。全文 query 搜索标题、原始商家/渠道、
 明细原名和备注。
+
+批量确认请求显式列出当前页面审核过的版本：
+
+```json
+{"records":[{"id":"uuid","revision":1}]}
+```
+
+服务端先锁定并校验全部草稿，再在同一事务确认。任一 ID 不存在、状态不正确或 revision 冲突时，
+整批不产生已确认事实。
 
 ## 4. 快速录入与解析
 
