@@ -16,3 +16,7 @@ permissions:
     audience: ledger
     scopes: [ledger.records.draft]
     resource_grant: ledger-workspace.drafts
+  - capability: ledger.records.write
+    audience: ledger
+    scopes: [ledger.records.write]
+    resource_grant: ledger-workspace.confirm

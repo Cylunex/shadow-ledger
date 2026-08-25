@@ -41,6 +41,7 @@ def agent_app_factory(settings: Settings, tmp_path: Path):
         allow_records: bool = True,
         allow_budgets: bool = True,
         allow_drafts: bool = True,
+        allow_confirm: bool = True,
         audiences: tuple[str, ...] = ("ledger",),
     ) -> Iterator[tuple[TestClient, object]]:
         secrets_dir = tmp_path / ("agent-secrets-" + hashlib.sha256(" ".join(scopes).encode()).hexdigest()[:8])
@@ -88,6 +89,7 @@ def agent_app_factory(settings: Settings, tmp_path: Path):
                             allow_records=allow_records,
                             allow_budgets=allow_budgets,
                             allow_drafts=allow_drafts,
+                            allow_confirm=allow_confirm,
                         )
                     )
             yield client, app
@@ -289,3 +291,99 @@ def test_agent_draft_is_deterministic_reversible_and_idempotent(agent_app_factor
             assert record.money_entry.currency == "CNY"
             assert audit is not None and audit.actor_type == "agent"
             assert set(audit.details) == {"state", "record_kind"}
+
+
+def test_reviewed_agent_draft_commit_is_scoped_audited_and_idempotent(
+    agent_app_factory,
+) -> None:
+    scopes = ("ledger.records.draft", "ledger.records.write")
+    with agent_app_factory(scopes) as (client, _):
+        payload = {
+            "occurred_at": "2026-08-25T12:10:00+08:00",
+            "timezone": "Asia/Shanghai",
+            "money_type": "expense",
+            "amount": "28.0000",
+            "currency": "CNY",
+            "title": "午餐",
+        }
+        created = client.post(
+            "/api/machine/v1/agent/drafts",
+            headers={**_authorization(), "Idempotency-Key": "reviewed-ledger-draft"},
+            json=payload,
+        )
+        record_id = created.json()["record_ref"].rsplit("/", 1)[-1]
+        committed = client.post(
+            f"/api/machine/v1/agent/drafts/{record_id}/commit",
+            headers=_authorization(),
+            json={"revision": created.json()["revision"]},
+        )
+        repeated = client.post(
+            f"/api/machine/v1/agent/drafts/{record_id}/commit",
+            headers=_authorization(),
+            json={"revision": created.json()["revision"]},
+        )
+
+        assert created.status_code == 201
+        assert committed.status_code == repeated.status_code == 200
+        assert committed.json()["state"] == "confirmed"
+        assert committed.json()["revision"] == 2
+        assert committed.json()["replayed"] is False
+        assert committed.json()["final_entry_created"] is True
+        assert repeated.json() == {**committed.json(), "replayed": True}
+
+        assert database.SessionLocal is not None
+        with database.SessionLocal() as session:
+            record = session.scalar(select(LedgerRecord))
+            audit = session.scalar(
+                select(AuditEvent).where(AuditEvent.action == "record.confirmed")
+            )
+            assert record is not None and record.state == "confirmed"
+            assert audit is not None
+            assert audit.actor_type == "agent"
+            assert audit.actor_id == AGENT_ID
+
+
+def test_agent_draft_commit_requires_write_scope_and_resource_grant(agent_app_factory) -> None:
+    with agent_app_factory(("ledger.records.draft",)) as (client, _):
+        created = client.post(
+            "/api/machine/v1/agent/drafts",
+            headers={**_authorization(), "Idempotency-Key": "scope-denied-draft"},
+            json={
+                "occurred_at": "2026-08-25T12:10:00+08:00",
+                "money_type": "expense",
+                "amount": "18.0000",
+                "currency": "CNY",
+            },
+        )
+        record_id = created.json()["record_ref"].rsplit("/", 1)[-1]
+        denied = client.post(
+            f"/api/machine/v1/agent/drafts/{record_id}/commit",
+            headers=_authorization(),
+            json={"revision": 1},
+        )
+
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "machine_scope_forbidden"
+
+    with agent_app_factory(
+        ("ledger.records.draft", "ledger.records.write"), allow_confirm=False
+    ) as (client, _):
+        created = client.post(
+            "/api/machine/v1/agent/drafts",
+            headers={**_authorization(), "Idempotency-Key": "grant-denied-draft"},
+            json={
+                "occurred_at": "2026-08-25T12:10:00+08:00",
+                "money_type": "expense",
+                "amount": "18.0000",
+                "currency": "CNY",
+            },
+        )
+        record_id = created.json()["record_ref"].rsplit("/", 1)[-1]
+        denied = client.post(
+            f"/api/machine/v1/agent/drafts/{record_id}/commit",
+            headers=_authorization(),
+            json={"revision": 1},
+        )
+
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "ledger_grant_forbidden"

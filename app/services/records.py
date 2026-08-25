@@ -358,7 +358,9 @@ def parse_etag(value: str | None) -> int:
         raise AppError(400, "invalid_if_match", "If-Match 格式无效") from exc
 
 
-def _confirm_locked(db: Session, record: LedgerRecord, actor_id: str) -> None:
+def _confirm_locked(
+    db: Session, record: LedgerRecord, actor_id: str, actor_type: str = "user"
+) -> None:
     if record.state != "draft":
         raise AppError(409, "invalid_state_transition", "只有草稿可以确认")
     if record.record_kind == "consumption" and record.consumption is None:
@@ -381,7 +383,7 @@ def _confirm_locked(db: Session, record: LedgerRecord, actor_id: str) -> None:
     db.add(
         AuditEvent(
             owner_id=record.owner_id,
-            actor_type="user",
+            actor_type=actor_type,
             actor_id=actor_id,
             action="record.confirmed",
             aggregate_type="record",
@@ -390,7 +392,14 @@ def _confirm_locked(db: Session, record: LedgerRecord, actor_id: str) -> None:
     )
 
 
-def confirm_record(db: Session, owner_id: str, record_id: uuid.UUID, revision: int, actor_id: str):
+def confirm_record(
+    db: Session,
+    owner_id: str,
+    record_id: uuid.UUID,
+    revision: int,
+    actor_id: str,
+    actor_type: str = "user",
+):
     record = db.scalar(
         record_query()
         .where(LedgerRecord.id == record_id, LedgerRecord.owner_id == owner_id)
@@ -399,7 +408,7 @@ def confirm_record(db: Session, owner_id: str, record_id: uuid.UUID, revision: i
     if record is None:
         raise AppError(404, "record_not_found", "记录不存在")
     _check_revision(record, revision)
-    _confirm_locked(db, record, actor_id)
+    _confirm_locked(db, record, actor_id, actor_type)
     db.commit()
     return get_record(db, owner_id, record.id)
 

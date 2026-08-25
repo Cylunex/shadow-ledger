@@ -66,6 +66,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AgentRecordDraftCreated"
+  /api/machine/v1/agent/drafts/{record_id}/commit:
+    post:
+      operationId: commit_agent_record_draft
+      summary: Commit an Agent-created draft after explicit user review
+      parameters:
+        - name: record_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentRecordDraftCommit"
+      responses:
+        "200":
+          description: Confirmed Ledger record, including idempotent replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRecordCommitted"
 components:
   parameters:
     Month:
@@ -216,3 +238,21 @@ components:
         revision: { type: integer, minimum: 1 }
         reversible: { const: true }
         final_entry_created: { const: false }
+    AgentRecordDraftCommit:
+      type: object
+      additionalProperties: false
+      required: [revision]
+      properties:
+        revision: { type: integer, minimum: 1 }
+    AgentRecordCommitted:
+      type: object
+      additionalProperties: false
+      required: [record_ref, state, revision, replayed, final_entry_created]
+      properties:
+        record_ref:
+          type: string
+          pattern: "^shadow://ledger/records/"
+        state: { const: confirmed }
+        revision: { type: integer, minimum: 2 }
+        replayed: { type: boolean }
+        final_entry_created: { const: true }

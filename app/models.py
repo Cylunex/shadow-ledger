@@ -526,6 +526,7 @@ class LedgerAgentGrant(Timestamps, Base):
     allow_records: Mapped[bool] = mapped_column(Boolean, default=False)
     allow_budgets: Mapped[bool] = mapped_column(Boolean, default=False)
     allow_drafts: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_confirm: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 

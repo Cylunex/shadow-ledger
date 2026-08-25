@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
@@ -25,7 +26,7 @@ from app.models import (
     MoneyEntry,
 )
 from app.schemas import Money, MoneyEntryInput, RecordCreate, StrictModel, jsonable
-from app.services.records import create_record
+from app.services.records import confirm_record, create_record, get_record
 
 router = APIRouter(prefix="/api/machine/v1/agent", tags=["machine-agent"])
 
@@ -62,6 +63,10 @@ class AgentRecordDraftCreate(StrictModel):
         if not normalized.isascii() or not normalized.isalpha():
             raise ValueError("currency must be a three-letter code")
         return normalized
+
+
+class AgentRecordDraftCommit(StrictModel):
+    revision: int = Field(ge=1)
 
 
 def _bearer_error(status_code: int, code: str, message: str) -> AppError:
@@ -394,4 +399,56 @@ def agent_draft_create(
         "revision": record.revision,
         "reversible": True,
         "final_entry_created": False,
+    }
+
+
+@router.post("/drafts/{record_id}/commit")
+def agent_draft_commit(
+    record_id: uuid.UUID,
+    body: AgentRecordDraftCommit,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    identity = _require_agent(request, authorization, "ledger.records.write")
+    grant = _grant(db, identity, "allow_confirm")
+    created_by_agent = db.scalar(
+        select(AuditEvent.id).where(
+            AuditEvent.owner_id == grant.owner_id,
+            AuditEvent.aggregate_type == "record",
+            AuditEvent.aggregate_id == record_id,
+            AuditEvent.action == "record.created",
+            AuditEvent.actor_type == "agent",
+            AuditEvent.actor_id == identity.agent_id,
+        )
+    )
+    if created_by_agent is None:
+        raise AppError(404, "agent_draft_not_found", "Agent 草稿不存在")
+
+    record = get_record(db, grant.owner_id, record_id)
+    if record.state == "confirmed":
+        return {
+            "record_ref": f"shadow://ledger/records/{record.id}",
+            "state": "confirmed",
+            "revision": record.revision,
+            "replayed": True,
+            "final_entry_created": True,
+        }
+    if record.state != "draft":
+        raise AppError(409, "invalid_state_transition", "只有草稿可以确认")
+
+    record = confirm_record(
+        db,
+        grant.owner_id,
+        record_id,
+        body.revision,
+        identity.agent_id,
+        actor_type="agent",
+    )
+    return {
+        "record_ref": f"shadow://ledger/records/{record.id}",
+        "state": "confirmed",
+        "revision": record.revision,
+        "replayed": False,
+        "final_entry_created": True,
     }

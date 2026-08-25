@@ -10,6 +10,7 @@ skills:
       - ledger.records.read
       - ledger.budgets.read
       - ledger.records.draft
+      - ledger.records.write
     invocation:
       model: true
       user: true
@@ -103,6 +104,29 @@ capabilities:
     data_classification: sensitive
     risk_level: L1
     confirmation: notify
+    reversible: true
+    resource_grant_required: true
+    idempotency_required: true
+  - id: ledger.records.write
+    summary: 在用户于 Nexus 审核确认后提交同一条 Agent 记账草案
+    audience: ledger
+    scopes: [ledger.records.write]
+    tools:
+      - name: ledger.records.commit
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: commit_agent_record_draft
+        exposure: hidden
+        result_mode: full
+        max_result_bytes: 4096
+        max_model_chars: 1200
+        timeout_ms: 15000
+        concurrency_safe: false
+        retry_policy: idempotent
+    effect: write
+    data_classification: sensitive
+    risk_level: L2
+    confirmation: policy
     reversible: true
     resource_grant_required: true
     idempotency_required: true

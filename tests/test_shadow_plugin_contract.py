@@ -57,10 +57,11 @@ def test_shadow_plugin_contract_matches_machine_routes(settings) -> None:
         "ledger.records.read",
         "ledger.budgets.read",
         "ledger.records.draft",
+        "ledger.records.write",
     }
 
 
-def test_machine_openapi_does_not_claim_account_payment_or_final_write() -> None:
+def test_machine_openapi_keeps_final_write_out_of_model_draft_input() -> None:
     contract = yaml.safe_load((ROOT / "contracts" / "agent.openapi.yaml").read_text("utf-8"))
     serialized = yaml.safe_dump(contract, sort_keys=True).lower()
     draft_properties = contract["components"]["schemas"]["AgentRecordDraftCreate"]["properties"]
@@ -68,5 +69,10 @@ def test_machine_openapi_does_not_claim_account_payment_or_final_write() -> None
     assert {"account_id", "payment_method", "exchange_rate", "confirm"}.isdisjoint(
         draft_properties
     )
-    assert "/confirm" not in serialized
+    assert "/api/machine/v1/agent/drafts/{record_id}/commit" in contract["paths"]
+    manifest = yaml.safe_load((ROOT / "agent" / "manifest.yaml").read_text("utf-8"))
+    write = next(
+        item for item in manifest["capabilities"] if item["id"] == "ledger.records.write"
+    )
+    assert write["tools"][0]["exposure"] == "hidden"
     assert "/exports" not in serialized

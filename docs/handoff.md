@@ -32,8 +32,8 @@ deploy/                     脱敏部署模板
 - 原始商家、渠道、商品和 Capture 原文不会被规范身份覆盖；
 - 周期事项只创建 Reminder 或 draft，从不自动确认；
 - 文件字节只进入 Asset；跨项目对象只保存 `shadow://` URI；
-- Agent 首期仅开放最小披露读取和可撤销草案；UseCycle、Forecast、MCP、Agent 正式入账与
-  自动抓单仍未实现。
+- Agent 对模型仅开放最小披露读取和可撤销草案；Nexus 用户审核后的隐藏正式入账见 ADR 0004；
+  UseCycle、Forecast、MCP 与自动抓单仍未实现。
 
 改变这些内容前必须新增 ADR，并同步模型、迁移、API、页面和实施文档。
 

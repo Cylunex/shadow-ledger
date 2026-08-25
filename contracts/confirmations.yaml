@@ -12,3 +12,6 @@ confirmations:
   - capability: ledger.records.draft
     mode: notify
     receipt_required: false
+  - capability: ledger.records.write
+    mode: policy
+    receipt_required: true
