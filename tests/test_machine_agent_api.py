@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
@@ -387,3 +388,61 @@ def test_agent_draft_commit_requires_write_scope_and_resource_grant(agent_app_fa
 
     assert denied.status_code == 403
     assert denied.json()["error"]["code"] == "ledger_grant_forbidden"
+
+
+def test_pending_agent_drafts_can_be_federated_and_rejected_from_nexus(
+    agent_app_factory,
+) -> None:
+    with agent_app_factory(("ledger.records.draft", "ledger.records.write")) as (client, _):
+        created = client.post(
+            "/api/machine/v1/agent/drafts",
+            headers={**_authorization(), "Idempotency-Key": "federated-ledger-draft"},
+            json={
+                "occurred_at": "2026-08-25T12:10:00+08:00",
+                "money_type": "expense",
+                "amount": "139.6300",
+                "currency": "CNY",
+                "category_key": None,
+                "title": "待审核超市记录",
+            },
+        )
+        record_id = created.json()["record_ref"].rsplit("/", 1)[-1]
+        pending = client.get("/api/machine/v1/agent/drafts", headers=_authorization())
+        rejected = client.post(
+            f"/api/machine/v1/agent/drafts/{record_id}/reject",
+            headers=_authorization(),
+            json={"revision": 1},
+        )
+        remaining = client.get("/api/machine/v1/agent/drafts", headers=_authorization())
+
+        assert pending.status_code == 200
+        assert len(pending.json()["items"]) == 1
+        item = pending.json()["items"][0]
+        assert item["record_ref"] == created.json()["record_ref"]
+        assert item["revision"] == 1
+        assert item["occurred_at"].startswith("2026-08-25T12:10:00")
+        assert item["money_type"] == "expense"
+        assert item["amount"] == "139.6300"
+        assert item["currency"] == "CNY"
+        assert item["category_key"] is None
+        assert item["title"] == "待审核超市记录"
+        assert rejected.status_code == 200
+        assert rejected.json()["state"] == "rejected"
+        assert rejected.json()["replayed"] is False
+        assert remaining.json()["items"] == []
+
+        replayed = client.post(
+            f"/api/machine/v1/agent/drafts/{record_id}/reject",
+            headers=_authorization(),
+            json={"revision": 1},
+        )
+        assert replayed.status_code == 200
+        assert replayed.json()["replayed"] is True
+
+        assert database.SessionLocal is not None
+        with database.SessionLocal() as session:
+            assert session.get(LedgerRecord, uuid.UUID(record_id)) is None
+            rejected_audit = session.scalar(
+                select(AuditEvent).where(AuditEvent.action == "record.draft_rejected")
+            )
+            assert rejected_audit is not None and rejected_audit.actor_type == "agent"

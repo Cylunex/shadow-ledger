@@ -50,6 +50,21 @@ paths:
               schema:
                 $ref: "#/components/schemas/AgentBudgetList"
   /api/machine/v1/agent/drafts:
+    get:
+      operationId: list_agent_record_drafts
+      summary: List pending drafts created by the same Agent for Nexus review
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 200 }
+      responses:
+        "200":
+          description: Pending Agent drafts with the fields needed for review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRecordDraftList"
     post:
       operationId: create_agent_record_draft
       summary: Create a reversible money record draft for later user confirmation
@@ -88,6 +103,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AgentRecordCommitted"
+  /api/machine/v1/agent/drafts/{record_id}/reject:
+    post:
+      operationId: reject_agent_record_draft
+      summary: Delete an Agent-created draft rejected in Nexus review
+      parameters:
+        - name: record_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentRecordDraftCommit"
+      responses:
+        "200":
+          description: Rejected draft receipt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRecordRejected"
 components:
   parameters:
     Month:
@@ -238,6 +275,33 @@ components:
         revision: { type: integer, minimum: 1 }
         reversible: { const: true }
         final_entry_created: { const: false }
+    AgentRecordDraftSummary:
+      type: object
+      additionalProperties: false
+      required: [record_ref, revision, created_at, occurred_at, money_type, amount, currency, category_key, title]
+      properties:
+        record_ref: { type: string, pattern: "^shadow://ledger/records/" }
+        revision: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        occurred_at: { type: string, format: date-time }
+        money_type:
+          anyOf:
+            - { enum: [expense, income, refund] }
+            - { type: "null" }
+        amount: { $ref: "#/components/schemas/OptionalMoneyValue" }
+        currency: { $ref: "#/components/schemas/OptionalString" }
+        category_key: { $ref: "#/components/schemas/OptionalString" }
+        title: { type: string }
+    AgentRecordDraftList:
+      type: object
+      additionalProperties: false
+      required: [items, truncated]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items: { $ref: "#/components/schemas/AgentRecordDraftSummary" }
+        truncated: { type: boolean }
     AgentRecordDraftCommit:
       type: object
       additionalProperties: false
@@ -256,3 +320,11 @@ components:
         revision: { type: integer, minimum: 2 }
         replayed: { type: boolean }
         final_entry_created: { const: true }
+    AgentRecordRejected:
+      type: object
+      additionalProperties: false
+      required: [record_ref, state, replayed]
+      properties:
+        record_ref: { type: string, pattern: "^shadow://ledger/records/" }
+        state: { const: rejected }
+        replayed: { type: boolean }

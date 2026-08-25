@@ -102,6 +102,27 @@ def _grant(db: Session, identity: AgentIdentity, permission: str) -> LedgerAgent
     return grant
 
 
+def _owned_agent_draft(
+    db: Session,
+    grant: LedgerAgentGrant,
+    identity: AgentIdentity,
+    record_id: uuid.UUID,
+) -> LedgerRecord:
+    created_by_agent = db.scalar(
+        select(AuditEvent.id).where(
+            AuditEvent.owner_id == grant.owner_id,
+            AuditEvent.aggregate_type == "record",
+            AuditEvent.aggregate_id == record_id,
+            AuditEvent.action == "record.created",
+            AuditEvent.actor_type == "agent",
+            AuditEvent.actor_id == identity.agent_id,
+        )
+    )
+    if created_by_agent is None:
+        raise AppError(404, "agent_draft_not_found", "Agent 草稿不存在")
+    return get_record(db, grant.owner_id, record_id)
+
+
 def _month_range(month: str | None) -> tuple[datetime, datetime, str]:
     try:
         start = (
@@ -402,6 +423,56 @@ def agent_draft_create(
     }
 
 
+@router.get("/drafts")
+def agent_draft_list(
+    request: Request,
+    limit: int = Query(default=200, ge=1, le=200),
+    authorization: Annotated[str | None, Header()] = None,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    identity = _require_agent(request, authorization, "ledger.records.write")
+    grant = _grant(db, identity, "allow_confirm")
+    rows = list(
+        db.scalars(
+            select(LedgerRecord)
+            .join(
+                AuditEvent,
+                (AuditEvent.aggregate_type == "record")
+                & (AuditEvent.aggregate_id == LedgerRecord.id)
+                & (AuditEvent.action == "record.created")
+                & (AuditEvent.actor_type == "agent")
+                & (AuditEvent.actor_id == identity.agent_id),
+            )
+            .where(
+                LedgerRecord.owner_id == grant.owner_id,
+                LedgerRecord.state == "draft",
+            )
+            .order_by(LedgerRecord.created_at, LedgerRecord.id)
+            .limit(limit + 1)
+        )
+    )
+    truncated = len(rows) > limit
+    rows = rows[:limit]
+    items: list[dict[str, object]] = []
+    for record in rows:
+        entry = record.money_entry
+        category = db.get(MoneyCategory, entry.category_id) if entry and entry.category_id else None
+        items.append(
+            {
+                "record_ref": f"shadow://ledger/records/{record.id}",
+                "revision": record.revision,
+                "created_at": record.created_at,
+                "occurred_at": record.occurred_at,
+                "money_type": entry.type if entry else None,
+                "amount": entry.amount if entry else None,
+                "currency": entry.currency if entry else None,
+                "category_key": category.key if category else None,
+                "title": entry.title if entry else "",
+            }
+        )
+    return jsonable({"items": items, "truncated": truncated})
+
+
 @router.post("/drafts/{record_id}/commit")
 def agent_draft_commit(
     record_id: uuid.UUID,
@@ -412,20 +483,7 @@ def agent_draft_commit(
 ) -> dict[str, object]:
     identity = _require_agent(request, authorization, "ledger.records.write")
     grant = _grant(db, identity, "allow_confirm")
-    created_by_agent = db.scalar(
-        select(AuditEvent.id).where(
-            AuditEvent.owner_id == grant.owner_id,
-            AuditEvent.aggregate_type == "record",
-            AuditEvent.aggregate_id == record_id,
-            AuditEvent.action == "record.created",
-            AuditEvent.actor_type == "agent",
-            AuditEvent.actor_id == identity.agent_id,
-        )
-    )
-    if created_by_agent is None:
-        raise AppError(404, "agent_draft_not_found", "Agent 草稿不存在")
-
-    record = get_record(db, grant.owner_id, record_id)
+    record = _owned_agent_draft(db, grant, identity, record_id)
     if record.state == "confirmed":
         return {
             "record_ref": f"shadow://ledger/records/{record.id}",
@@ -451,4 +509,54 @@ def agent_draft_commit(
         "revision": record.revision,
         "replayed": False,
         "final_entry_created": True,
+    }
+
+
+@router.post("/drafts/{record_id}/reject", status_code=status.HTTP_200_OK)
+def agent_draft_reject(
+    record_id: uuid.UUID,
+    body: AgentRecordDraftCommit,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    identity = _require_agent(request, authorization, "ledger.records.write")
+    grant = _grant(db, identity, "allow_confirm")
+    rejected = db.scalar(
+        select(AuditEvent.id).where(
+            AuditEvent.owner_id == grant.owner_id,
+            AuditEvent.aggregate_type == "record",
+            AuditEvent.aggregate_id == record_id,
+            AuditEvent.action == "record.draft_rejected",
+            AuditEvent.actor_type == "agent",
+            AuditEvent.actor_id == identity.agent_id,
+        )
+    )
+    if rejected is not None:
+        return {
+            "record_ref": f"shadow://ledger/records/{record_id}",
+            "state": "rejected",
+            "replayed": True,
+        }
+    record = _owned_agent_draft(db, grant, identity, record_id)
+    if record.state != "draft":
+        raise AppError(409, "invalid_state_transition", "只有草稿可以退回")
+    if record.revision != body.revision:
+        raise AppError(409, "revision_conflict", "记录已被其他操作修改，请刷新后重试")
+    db.delete(record)
+    db.add(
+        AuditEvent(
+            owner_id=grant.owner_id,
+            actor_type="agent",
+            actor_id=identity.agent_id,
+            action="record.draft_rejected",
+            aggregate_type="record",
+            aggregate_id=record_id,
+        )
+    )
+    db.commit()
+    return {
+        "record_ref": f"shadow://ledger/records/{record_id}",
+        "state": "rejected",
+        "replayed": False,
     }

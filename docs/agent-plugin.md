@@ -42,10 +42,16 @@ Review 中的用户确认可通过隐藏 L2 能力提交同一条 Agent 草稿�
 结果数和截断标志；创建与确认只记录 agent ID、record ID、状态与 record kind，不记录金额、标题、
 备注或 Bearer。
 
+统一 Nexus Profile 不再向模型选择 `ledger.records.draft`。隐藏 write 边界还允许 Nexus 列出同一
+Agent 的 pending 草稿，并在用户退回时删除指定草稿。Nexus 只保存审核快照和 `shadow://` 引用，
+Ledger 仍是草稿与正式事实的唯一所有者。退回会在同一数据库事务中删除草稿并写入最小审计；
+重复请求依据同一 Agent 的拒绝审计安全返回 replay，不会把批量 Review 卡在半完成状态。
+
 ## Platform/DSH 验证
 
 Platform validator 校验 Definition、Manifest、OpenAPI 和所有描述符。独立 Profile 应固定 DSH
-distribution 与 Tools API 为 `0.1.1-rc.2`，模型 Profile 只选择四个读取/草稿 capability，并通过实例配置只登记
+distribution 与 Tools API 为 `0.1.1-rc.2`。统一 Nexus Profile 只选择三个读取 capability；独立
+Ledger Profile 可按自身审核边界选择草稿 capability。实例配置只登记
 `SHADOW_LEDGER_BASE_URL` 与 `SHADOW_LEDGER_AGENT_TOKEN` 环境变量名。生成 Bundle 只把
 `@deepseek-ai/dsh-tools` 放入 peer dependency；本仓库不维护领域专属 DSH npm 包。
 
