@@ -446,3 +446,43 @@ def test_pending_agent_drafts_can_be_federated_and_rejected_from_nexus(
                 select(AuditEvent).where(AuditEvent.action == "record.draft_rejected")
             )
             assert rejected_audit is not None and rejected_audit.actor_type == "agent"
+
+
+def test_standard_nexus_review_protocol_creates_lists_and_commits(agent_app_factory) -> None:
+    with agent_app_factory(("ledger.records.draft", "ledger.records.write")) as (client, _):
+        created = client.post(
+            "/api/machine/v1/agent/nexus/reviews",
+            headers={**_authorization(), "Idempotency-Key": "nexus-ledger-review"},
+            json={
+                "intent": "ledger.record",
+                "summary": "午餐",
+                "fields": {
+                    "occurredAt": "2026-08-26T12:30:00+08:00",
+                    "moneyType": "expense",
+                    "amount": "36.5000",
+                    "currency": "CNY",
+                    "title": "午餐",
+                },
+            },
+        )
+        assert created.status_code == 201, created.text
+        review = created.json()
+        assert review["protocol"] == "shadow.review.v1"
+        assert review["domain"] == "ledger"
+        assert review["state"] == "pending"
+        assert review["fields"]["amount"] == "36.5000"
+
+        listed = client.get(
+            "/api/machine/v1/agent/nexus/reviews", headers=_authorization()
+        )
+        assert listed.status_code == 200, listed.text
+        assert [item["review_id"] for item in listed.json()["items"]] == [review["review_id"]]
+
+        committed = client.post(
+            f"/api/machine/v1/agent/nexus/reviews/{review['review_id']}/commit",
+            headers=_authorization(),
+            json={"revision": review["revision"]},
+        )
+        assert committed.status_code == 200, committed.text
+        assert committed.json()["state"] == "committed"
+        assert committed.json()["receipt"] == review["reference"]

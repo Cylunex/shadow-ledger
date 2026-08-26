@@ -1,0 +1,37 @@
+version: 1
+presentation:
+  short_id: ledger
+  title: Ledger
+  caption: 收支、消费记忆与未来计划
+  icon: ledger
+  color: "#FB7185"
+  order: 20
+surfaces:
+  - id: today
+    type: summary
+    capability: ledger.summary.read
+    operation_id: get_agent_summary
+    display:
+      metric_pointer: /net_spending
+      detail_pointer: /month
+      unit: CNY
+  - id: capture
+    type: capture
+    capability: ledger.records.draft
+    operation_id: create_nexus_ledger_review
+    risk_level: L2
+    intent_prefixes: [ledger.record, ledger.expense, ledger.income, ledger.refund]
+  - id: review
+    type: review
+    capability: ledger.records.write
+    risk_level: L2
+    intent_prefixes: [ledger.record, ledger.expense, ledger.income, ledger.refund]
+  - id: app
+    type: app-link
+review:
+  protocol: shadow.review.v1
+  mode: commit
+  list_operation_id: list_nexus_ledger_reviews
+  create_operation_id: create_nexus_ledger_review
+  commit_operation_id: commit_nexus_ledger_review
+  reject_operation_id: reject_nexus_ledger_review

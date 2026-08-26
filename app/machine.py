@@ -69,6 +69,14 @@ class AgentRecordDraftCommit(StrictModel):
     revision: int = Field(ge=1)
 
 
+class NexusReviewCreate(StrictModel):
+    intent: str = Field(pattern=r"^ledger\.[A-Za-z0-9.-]{1,80}$")
+    summary: str = Field(min_length=1, max_length=500)
+    fields: dict[str, object]
+    source_text: str = Field(default="", max_length=4000)
+    source_refs: list[str] = Field(default_factory=list, max_length=16)
+
+
 def _bearer_error(status_code: int, code: str, message: str) -> AppError:
     headers = {"WWW-Authenticate": "Bearer"} if status_code == 401 else None
     return AppError(status_code, code, message, headers=headers)
@@ -559,4 +567,174 @@ def agent_draft_reject(
         "record_ref": f"shadow://ledger/records/{record_id}",
         "state": "rejected",
         "replayed": False,
+    }
+
+
+@router.post(
+    "/nexus/reviews",
+    status_code=status.HTTP_201_CREATED,
+    operation_id="create_nexus_ledger_review",
+)
+def create_nexus_ledger_review(
+    body: NexusReviewCreate,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    fields = body.fields
+    occurred_at = fields.get("occurredAt")
+    money_type = fields.get("moneyType")
+    amount = fields.get("amount")
+    currency = fields.get("currency", "CNY")
+    if not isinstance(occurred_at, str):
+        occurred_at = datetime.now(UTC).isoformat()
+    if money_type not in {"expense", "income", "refund"} or amount is None:
+        raise AppError(422, "invalid_nexus_review", "账目草稿缺少金额或收支类型")
+    created = agent_draft_create(
+        AgentRecordDraftCreate(
+            occurred_at=datetime.fromisoformat(occurred_at),
+            timezone=str(fields.get("timezone") or "Asia/Shanghai"),
+            money_type=money_type,
+            amount=amount,
+            currency=str(currency),
+            category_key=(
+                str(fields["categoryKey"]) if fields.get("categoryKey") is not None else None
+            ),
+            title=str(fields.get("title") or body.summary),
+        ),
+        request,
+        authorization,
+        idempotency_key,
+        db,
+    )
+    record_id = uuid.UUID(str(created["record_ref"]).rsplit("/", 1)[-1])
+    record = db.get(LedgerRecord, record_id)
+    if record is None:
+        raise AppError(500, "nexus_review_missing", "账目草稿创建后不可见")
+    return _ledger_review_envelope(record, db, request.state.request_id)
+
+
+@router.get("/nexus/reviews", operation_id="list_nexus_ledger_reviews")
+def list_nexus_ledger_reviews(
+    request: Request,
+    limit: int = Query(default=200, ge=1, le=200),
+    authorization: Annotated[str | None, Header()] = None,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    listed = agent_draft_list(request, limit, authorization, db)
+    items = []
+    for item in listed["items"]:
+        record_id = uuid.UUID(str(item["record_ref"]).rsplit("/", 1)[-1])
+        record = db.get(LedgerRecord, record_id)
+        if record is not None:
+            items.append(_ledger_review_envelope(record, db, request.state.request_id))
+    return {
+        "protocol": "shadow.review.v1",
+        "items": items,
+        "truncated": listed["truncated"],
+        "trace_id": request.state.request_id,
+    }
+
+
+@router.post(
+    "/nexus/reviews/{review_id}/commit",
+    operation_id="commit_nexus_ledger_review",
+)
+def commit_nexus_ledger_review(
+    review_id: uuid.UUID,
+    body: AgentRecordDraftCommit,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    result = agent_draft_commit(review_id, body, request, authorization, db)
+    record = db.get(LedgerRecord, review_id)
+    if record is None:
+        raise AppError(500, "nexus_review_missing", "账目记录提交后不可见")
+    return _ledger_review_envelope(
+        record,
+        db,
+        request.state.request_id,
+        receipt=str(result["record_ref"]),
+        replayed=bool(result["replayed"]),
+    )
+
+
+@router.post(
+    "/nexus/reviews/{review_id}/reject",
+    operation_id="reject_nexus_ledger_review",
+)
+def reject_nexus_ledger_review(
+    review_id: uuid.UUID,
+    body: AgentRecordDraftCommit,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    result = agent_draft_reject(review_id, body, request, authorization, db)
+    return {
+        "protocol": "shadow.review.v1",
+        "review_id": str(review_id),
+        "reference": str(result["record_ref"]),
+        "revision": body.revision,
+        "domain": "ledger",
+        "intent": "ledger.record",
+        "summary": "Ledger 草稿已退回",
+        "fields": {},
+        "risk_level": "L2",
+        "state": "rejected",
+        "created_at": datetime.now(UTC).isoformat(),
+        "source_refs": [],
+        "trace_id": request.state.request_id,
+        "receipt": None,
+        "replayed": bool(result["replayed"]),
+    }
+
+
+def _ledger_review_envelope(
+    record: LedgerRecord,
+    db: Session,
+    trace_id: str,
+    *,
+    receipt: str | None = None,
+    replayed: bool = False,
+) -> dict[str, object]:
+    entry = record.money_entry
+    category = db.get(MoneyCategory, entry.category_id) if entry and entry.category_id else None
+    fields: dict[str, object] = {
+        "occurredAt": record.occurred_at.isoformat(),
+        "timezone": record.timezone,
+    }
+    if entry is not None:
+        fields.update(
+            {
+                "moneyType": entry.type,
+                "amount": str(entry.amount),
+                "currency": entry.currency,
+                "title": entry.title,
+            }
+        )
+    if category is not None:
+        fields["categoryKey"] = category.key
+    state = "committed" if record.state == "confirmed" else "pending"
+    summary = str(fields.get("title") or "Ledger 账目草稿")
+    if "amount" in fields:
+        summary = f"{summary} · {fields.get('currency', 'CNY')} {fields['amount']}"
+    return {
+        "protocol": "shadow.review.v1",
+        "review_id": str(record.id),
+        "reference": f"shadow://ledger/records/{record.id}",
+        "revision": record.revision,
+        "domain": "ledger",
+        "intent": "ledger.record",
+        "summary": summary,
+        "fields": fields,
+        "risk_level": "L2",
+        "state": state,
+        "created_at": record.created_at.isoformat(),
+        "source_refs": [],
+        "trace_id": trace_id,
+        "receipt": receipt,
+        "replayed": replayed,
     }

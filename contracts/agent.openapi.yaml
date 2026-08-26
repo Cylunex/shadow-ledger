@@ -125,8 +125,67 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AgentRecordRejected"
+  /api/machine/v1/agent/nexus/reviews:
+    get:
+      operationId: list_nexus_ledger_reviews
+      responses:
+        "200":
+          description: Normalized Ledger review queue
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NexusReviewList" }
+    post:
+      operationId: create_nexus_ledger_review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NexusReviewCreate" }
+      responses:
+        "201":
+          description: Normalized Ledger review
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NexusReview" }
+  /api/machine/v1/agent/nexus/reviews/{review_id}/commit:
+    post:
+      operationId: commit_nexus_ledger_review
+      parameters:
+        - $ref: "#/components/parameters/ReviewId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentRecordDraftCommit" }
+      responses:
+        "200":
+          description: Committed normalized Ledger review
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NexusReview" }
+  /api/machine/v1/agent/nexus/reviews/{review_id}/reject:
+    post:
+      operationId: reject_nexus_ledger_review
+      parameters:
+        - $ref: "#/components/parameters/ReviewId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentRecordDraftCommit" }
+      responses:
+        "200":
+          description: Rejected normalized Ledger review
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NexusReview" }
 components:
   parameters:
+    ReviewId:
+      name: review_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     Month:
       name: month
       in: query
@@ -143,6 +202,53 @@ components:
         pattern: "^[A-Za-z]{3}$"
         default: CNY
   schemas:
+    NexusReviewCreate:
+      type: object
+      additionalProperties: false
+      required: [intent, summary, fields]
+      properties:
+        intent: { type: string }
+        summary: { type: string, maxLength: 500 }
+        fields: { type: object, additionalProperties: true }
+        source_text: { type: string, maxLength: 4000 }
+        source_refs:
+          type: array
+          maxItems: 16
+          items: { type: string }
+    NexusReview:
+      type: object
+      additionalProperties: false
+      required: [protocol, review_id, reference, revision, domain, intent, summary, fields, risk_level, state, created_at, source_refs, trace_id, receipt, replayed]
+      properties:
+        protocol: { const: shadow.review.v1 }
+        review_id: { type: string, format: uuid }
+        reference: { type: string }
+        revision: { type: integer }
+        domain: { const: ledger }
+        intent: { type: string }
+        summary: { type: string }
+        fields: { type: object, additionalProperties: true }
+        risk_level: { const: L2 }
+        state: { enum: [pending, committed, rejected] }
+        created_at: { type: string, format: date-time }
+        source_refs: { type: array, items: { type: string } }
+        trace_id: { type: string }
+        receipt:
+          anyOf:
+            - { type: string }
+            - { type: "null" }
+        replayed: { type: boolean }
+    NexusReviewList:
+      type: object
+      additionalProperties: true
+      required: [protocol, items, truncated, trace_id]
+      properties:
+        protocol: { const: shadow.review.v1 }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/NexusReview" }
+        truncated: { type: boolean }
+        trace_id: { type: string }
     MoneyValue:
       type: string
       pattern: "^-?[0-9]+(?:\\.[0-9]{1,4})?$"
