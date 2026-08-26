@@ -334,7 +334,7 @@ def list_records(
         )
     return list(
         db.scalars(
-            statement.order_by(LedgerRecord.occurred_at.desc(), LedgerRecord.id).limit(limit)
+            statement.order_by(LedgerRecord.occurred_at.desc(), LedgerRecord.id.desc()).limit(limit)
         )
     )
 

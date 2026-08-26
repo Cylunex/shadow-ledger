@@ -31,14 +31,25 @@ def test_health_and_readiness(client):
 
 def test_draft_review_actions_are_present_in_browser_ui(client):
     page = client.get("/")
-    script = client.get("/static/app.js?v=20260825-draft-confirm")
+    script = client.get("/static/app.js?v=20260826-record-actions-3")
 
     assert page.status_code == script.status_code == 200
     assert 'id="batch-confirm"' in page.text
-    assert "app.js?v=20260825-draft-confirm" in page.text
+    assert 'id="record-filter-form"' in page.text
+    assert 'id="filter-query"' in page.text
+    assert 'id="filter-state"' in page.text
+    assert 'id="load-more"' in page.text
+    assert "app.css?v=20260826-record-actions" in page.text
+    assert "app.js?v=20260826-record-actions-3" in page.text
+    assert "编辑草稿" in script.text
     assert "确认入账" in script.text
+    assert "删除草稿" in script.text
+    assert "撤销记录" in script.text
     assert "全部确认入账" in script.text
     assert "/records/batch-confirm" in script.text
+    assert "/void" in script.text
+    assert "amount_min" in script.text
+    assert "occurred_from" in script.text
 
 
 def test_empty_insight_endpoints_are_stable(client):
@@ -112,9 +123,7 @@ def test_batch_confirm_is_atomic_and_revision_checked(client, write_headers):
     assert confirmed.status_code == 200, confirmed.text
     assert confirmed.json()["confirmed_count"] == 2
     for row in drafts:
-        current = client.get(
-            f"/api/v1/records/{row['id']}", headers={"X-Dev-User": "alice"}
-        ).json()
+        current = client.get(f"/api/v1/records/{row['id']}", headers={"X-Dev-User": "alice"}).json()
         assert current["state"] == "confirmed"
         assert current["revision"] == 2
 
@@ -139,11 +148,80 @@ def test_batch_confirm_is_atomic_and_revision_checked(client, write_headers):
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "revision_conflict"
     for row in conflicted_drafts:
-        current = client.get(
-            f"/api/v1/records/{row['id']}", headers={"X-Dev-User": "alice"}
-        ).json()
+        current = client.get(f"/api/v1/records/{row['id']}", headers={"X-Dev-User": "alice"}).json()
         assert current["state"] == "draft"
         assert current["revision"] == 1
+
+
+def test_draft_can_be_edited_with_revision_check(client, write_headers):
+    created = client.post(
+        "/api/v1/records",
+        json=money_payload(),
+        headers={**write_headers, "Idempotency-Key": "editable-draft"},
+    ).json()
+    payload = money_payload("35.25")
+    payload.pop("confirm")
+    updated = client.patch(
+        f"/api/v1/records/{created['id']}",
+        json=payload,
+        headers={**write_headers, "If-Match": '"1"'},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["revision"] == 2
+    assert updated.json()["money_entry"]["amount"] == "35.2500"
+
+    stale = client.patch(
+        f"/api/v1/records/{created['id']}",
+        json=payload,
+        headers={**write_headers, "If-Match": '"1"'},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "revision_conflict"
+
+
+def test_record_filters_and_cursor_pagination(client, write_headers):
+    occurred_at = "2026-08-20T12:00:00+08:00"
+    records = []
+    for index, (entry_type, title, amount) in enumerate(
+        (
+            ("expense", "筛选午餐", "28.00"),
+            ("income", "筛选工资", "8000.00"),
+            ("refund", "筛选退款", "12.00"),
+        )
+    ):
+        payload = money_payload(amount, confirm=True)
+        payload["occurred_at"] = occurred_at
+        payload["money_entry"]["type"] = entry_type
+        payload["money_entry"]["title"] = title
+        records.append(
+            client.post(
+                "/api/v1/records",
+                json=payload,
+                headers={**write_headers, "Idempotency-Key": f"filter-{index}"},
+            ).json()
+        )
+
+    filtered = client.get(
+        "/api/v1/records?money_type=income&query=工资&occurred_from=2026-08-20T00:00:00%2B08:00&occurred_to=2026-08-21T00:00:00%2B08:00",
+        headers={"X-Dev-User": "alice"},
+    )
+    assert filtered.status_code == 200, filtered.text
+    assert [row["id"] for row in filtered.json()["items"]] == [records[1]["id"]]
+
+    seen = []
+    cursor = None
+    while True:
+        params = {"limit": 1}
+        if cursor:
+            params["cursor"] = cursor
+        page = client.get("/api/v1/records", params=params, headers={"X-Dev-User": "alice"})
+        assert page.status_code == 200, page.text
+        seen.extend(row["id"] for row in page.json()["items"])
+        cursor = page.json()["next_cursor"]
+        if not cursor:
+            break
+    assert len(seen) == len(set(seen)) == 3
+    assert set(seen) == {record["id"] for record in records}
 
 
 def test_unknown_amount_consumption_can_be_confirmed_then_completed(client, write_headers):

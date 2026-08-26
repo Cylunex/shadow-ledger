@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>Shadow Ledger</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260825">
-  <script src="{{ prefix }}/static/app.js?v=20260825-draft-confirm" defer></script>
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260826-record-actions">
+  <script src="{{ prefix }}/static/app.js?v=20260826-record-actions-3" defer></script>
 </head>
 <body data-page="{{ page }}" data-prefix="{{ prefix }}">
   <a class="skip" href="#main">跳到主要内容</a>
@@ -29,13 +29,31 @@
         <button class="primary" type="submit">记录</button><p id="form-status" role="status"></p>
       </form>
       <div class="shortcuts"><button id="text-capture">说一句</button><button id="asset-capture">扫截图</button><button id="bill-import">导入账单</button><button id="copy-last">复制上次</button></div>
+      <details id="record-filters" class="filter-card">
+        <summary>搜索与筛选 <span id="filter-count" class="badge" hidden></span></summary>
+        <form id="record-filter-form">
+          <label for="filter-query">搜索<input id="filter-query" maxlength="200" placeholder="标题、商家、渠道、明细或备注"></label>
+          <div class="details-grid">
+            <label for="filter-state">状态<select id="filter-state"><option value="confirmed">已入账</option><option value="draft">草稿</option><option value="voided">已撤销</option></select></label>
+            <label for="filter-type">收支类型<select id="filter-type"><option value="">全部类型</option><option value="expense">支出</option><option value="income">收入</option><option value="refund">退款</option></select></label>
+            <label for="filter-category">分类<select id="filter-category"><option value="">全部分类</option></select></label>
+            <label for="filter-scene">消费场景<select id="filter-scene"><option value="">全部场景</option><option value="online_purchase">线上购物</option><option value="offline_purchase">线下购物</option><option value="delivery">外卖</option><option value="dine_in">堂食</option><option value="drink">饮品</option><option value="service">服务</option><option value="subscription">订阅</option><option value="transport">交通</option><option value="entertainment">娱乐</option><option value="travel">旅行</option><option value="other">其他</option></select></label>
+            <label for="filter-from">开始日期<input id="filter-from" type="date"></label>
+            <label for="filter-to">结束日期<input id="filter-to" type="date"></label>
+            <label for="filter-min">最低金额<input id="filter-min" type="number" min="0" step="0.01" inputmode="decimal" placeholder="不限"></label>
+            <label for="filter-max">最高金额<input id="filter-max" type="number" min="0" step="0.01" inputmode="decimal" placeholder="不限"></label>
+          </div>
+          <div class="filter-actions"><button class="primary" type="submit">应用筛选</button><button id="filter-reset" class="quiet" type="button">重置</button></div>
+        </form>
+      </details>
       <section><div class="section-title"><h2 id="timeline-title">最近记录</h2><div><button id="batch-confirm" class="quiet" type="button" hidden>确认这批</button> <button id="refresh" type="button">刷新</button></div></div><div id="timeline" class="timeline" aria-live="polite"></div></section>
+      <button id="load-more" class="quiet load-more" type="button" hidden>加载更多</button>
     </section>
     <section id="consumption-page" class="page"><h2>消费</h2><p class="muted">按场景回看消费内容、原始商家与体验。</p><div id="scene-cards" class="card-grid"></div><h3>常去商家</h3><div id="merchant-list" class="list"></div><h3>常买内容</h3><div id="item-list" class="list"></div></section>
     <section id="planning-page" class="page"><h2>计划</h2><div class="tabs"><button data-plan="intents" class="active">想要</button><button data-plan="commitments">周期</button><button data-plan="reminders">提醒</button></div><div id="planning-list" class="list"></div><button id="add-plan" class="primary">添加计划</button></section>
     <section id="insights-page" class="page"><h2>洞察</h2><p class="muted">所有金额统计只包含已确认事实，未知金额消费只进入频率。</p><div id="insight-summary" class="card-grid"></div><h3>消费场景频率</h3><div id="insight-scenes" class="bars"></div><h3>消费目标</h3><div id="budget-list" class="list"></div></section>
   </main>
   <nav class="bottom-nav" aria-label="主导航"><a href="{{ prefix }}/" data-page="records">记录</a><a href="{{ prefix }}/consumption" data-page="consumption">消费</a><a href="{{ prefix }}/planning" data-page="planning">计划</a><a href="{{ prefix }}/insights" data-page="insights">洞察</a></nav>
-  <dialog id="dialog"><form method="dialog"><button class="dialog-close" aria-label="关闭">×</button><div id="dialog-body"></div></form></dialog>
+  <dialog id="dialog"><div><button class="dialog-close" type="button" aria-label="关闭">×</button><div id="dialog-body"></div></div></dialog>
 </body>
 </html>
