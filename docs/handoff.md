@@ -18,6 +18,9 @@ app/worker.py               PostgreSQL Job/Outbox/Reminder
 app/machine.py              Shadow Agent read + draft 机器 API
 app/services/import_review.py 导入复核、可撤销商家规则与质量指标
 app/operational_evidence.py Platform observed evidence 构建
+app/services/forecast.py   可重放的确定性预测
+app/services/intake.py     Webhook/目录统一 draft intake
+app/mcp_server.py          官方 SDK stdio MCP
 shadow-plugin.yaml          运行时无关插件 Definition
 migrations/                 Alembic 历史
 scripts/                    observed evidence 与隔离恢复验证入口
@@ -36,7 +39,7 @@ deploy/                     脱敏部署模板
 - 周期事项只创建 Reminder 或 draft，从不自动确认；
 - 文件字节只进入 Asset；跨项目对象只保存 `shadow://` URI；
 - Agent 对模型仅开放最小披露读取和可撤销草案；Nexus 用户审核后的隐藏正式入账见 ADR 0004；
-  UseCycle、Forecast、MCP 与自动抓单仍未实现。
+  UseCycle、Forecast、MCP 与自动抓单已按 ADR 0006 实现，且所有自动化仍只创建建议或草稿。
 
 改变这些内容前必须新增 ADR，并同步模型、迁移、API、页面和实施文档。
 
@@ -55,6 +58,7 @@ deploy/                     脱敏部署模板
 1. 在实际 Shadow Identity/Asset 测试环境完成契约联调；
 2. 使用 PostgreSQL 16 执行空库与上一发布版本迁移演练；
 3. 接入生产备份、指标抓取和告警；
-4. 积累真实事实后评估 v2 门槛，不提前实现 Forecast/UseCycle/Agent。
+4. 以确定性 Forecast 作为基线积累回测数据，不提前引入机器学习或自动确认。
 
-当前已增加消费事实导入复核、Archive 稳定引用和预测评估就绪度；Forecast/UseCycle 仍未实现。
+当前还增加了显式 UseCycle、可回算 Forecast、stdio MCP 与通用 intake。生产启用前需执行 0005
+迁移，并在仓库外提供 MCP/intake owner 文件和最小权限运行配置。

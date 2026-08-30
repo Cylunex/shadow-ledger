@@ -25,6 +25,8 @@ from app.models import (
     BudgetTarget,
     CaptureSource,
     ExternalReference,
+    ForecastItem,
+    ForecastRun,
     ItemIdentity,
     LedgerRecord,
     LedgerRecordSource,
@@ -34,8 +36,10 @@ from app.models import (
     RecurringCommitment,
     Reminder,
     SpendingIntent,
+    UseCycle,
 )
 from app.schemas import RecordCreate, jsonable
+from app.services.intake import process_intake_directory, read_owner_id
 from app.services.records import create_record, record_query, serialize_record
 
 log = logging.getLogger("ledger.worker")
@@ -160,7 +164,12 @@ def process_job(db: Session, job: BackgroundJob) -> None:
                 "recurring_commitments": RecurringCommitment,
                 "budget_targets": BudgetTarget,
                 "reminders": Reminder,
+                "use_cycles": UseCycle,
+                "forecast_runs": ForecastRun,
             }
+            forecast_run_ids = list(
+                db.scalars(select(ForecastRun.id).where(ForecastRun.owner_id == owner_id))
+            )
             content = json.dumps(
                 {
                     "version": 1,
@@ -172,6 +181,12 @@ def process_job(db: Session, job: BackgroundJob) -> None:
                         ]
                         for name, model in collections.items()
                     },
+                    "forecast_items": [
+                        export_row(row)
+                        for row in db.scalars(
+                            select(ForecastItem).where(ForecastItem.run_id.in_(forecast_run_ids))
+                        )
+                    ],
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),
@@ -307,6 +322,14 @@ def run_once(worker_id: str | None = None) -> int:
     worker_id = worker_id or f"{socket.gethostname()}:{os.getpid()}"
     completed = 0
     with database.SessionLocal() as db:
+        settings = get_settings()
+        if settings.intake_directory and settings.intake_owner_id_file:
+            result = process_intake_directory(
+                db,
+                settings.intake_directory,
+                read_owner_id(settings.intake_owner_id_file),
+            )
+            completed += result["processed"] + result["failed"]
         completed += create_due_reminders(db)
         completed += int(claim_and_run_job(db, worker_id))
         completed += int(deliver_outbox(db))

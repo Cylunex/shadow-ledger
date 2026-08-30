@@ -298,27 +298,37 @@ BudgetTarget
 - 金额未知的记录不计入进度，并单独提示；
 - 它是辅助洞察，不影响消费记录的确认与撤销。
 
-## 12. v2 扩展对象
+## 12. UseCycle 与 Forecast
 
 ### UseCycle
 
-用于少量消耗品的开始/结束观察，不表示库存：
+用于少量消耗品的开始/结束观察，不表示库存，也不会由购买自动创建：
 
 ```text
-item_identity_id, purchase_line_id?, started_at, finished_at?, outcome, note
+id, owner_id, item_identity_id, source_record_id?, label?, started_at,
+expected_end_at?, ended_at?, state, note, revision
 ```
 
 ### Forecast
 
-是带有效期的可重建缓存：
+Forecast 由不可变运行快照和可过期建议组成：
 
 ```text
-forecast_type, target_type, target_id, predicted_start, predicted_end,
-expected_amount, confidence, basis JSONB, model_key, model_version,
-calculated_at, expires_at
+ForecastRun
+├── as_of, timezone, horizon_days, algorithm_version
+├── input_snapshot, input_hash, output_hash
+└── created_at
+
+ForecastItem
+├── source_key, kind, target_uri, predicted_at
+├── expected_amount?, currency?, confidence
+├── explanation, evidence, expires_at
+└── state, revision
 ```
 
-v1 不建立依赖 Forecast 的用户流程；删除全部 Forecast 后必须可以从事实重新计算。
+算法首版只使用明确周期事项、至少三次已确认消费的典型间隔，以及显式/历史 UseCycle 时长。完整
+输入快照和输出哈希支持验算；删除全部 Forecast 后仍可从事实重新计算。ForecastItem 不参与任何
+金额汇总，也不能直接转换为 confirmed Record。
 
 ## 13. 通用基础表
 

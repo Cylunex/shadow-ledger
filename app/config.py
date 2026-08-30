@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     dev_auth: bool = False
     max_request_bytes: int = 2_000_000
     worker_poll_seconds: float = 1.0
+    intake_directory: Path | None = None
+    intake_owner_id_file: Path | None = None
+    mcp_owner_id_file: Path | None = None
+    mcp_allow_drafts: bool = False
 
     @field_validator("default_currency")
     @classmethod
@@ -98,6 +102,10 @@ class Settings(BaseSettings):
     def secure_production(self) -> Settings:
         if bool(self.agent_registry_path) != bool(self.agent_secrets_dir):
             raise ValueError("agent registry and secrets directory must be configured together")
+        if bool(self.intake_directory) != bool(self.intake_owner_id_file):
+            raise ValueError("intake directory and owner id file must be configured together")
+        if self.mcp_allow_drafts and self.mcp_owner_id_file is None:
+            raise ValueError("MCP draft access requires an explicit owner id file")
         if self.env == "production":
             if self.dev_auth:
                 raise ValueError("dev_auth is forbidden in production")

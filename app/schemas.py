@@ -4,6 +4,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -309,6 +310,128 @@ class ArchiveEvidenceCreate(StrictModel):
 class ArchiveEvidenceRelease(StrictModel):
     revision: int = Field(ge=1)
     reason: str = Field(min_length=1, max_length=500)
+
+
+class UseCycleCreate(StrictModel):
+    item_identity_id: uuid.UUID
+    source_record_id: uuid.UUID | None = None
+    label: str | None = Field(default=None, max_length=200)
+    started_at: datetime
+    expected_end_at: datetime | None = None
+    note: str = Field(default="", max_length=2000)
+
+    @field_validator("started_at", "expected_end_at")
+    @classmethod
+    def timezone_required(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("use cycle timestamps must include a UTC offset")
+        return value
+
+    @model_validator(mode="after")
+    def valid_dates(self) -> UseCycleCreate:
+        if self.expected_end_at is not None and self.expected_end_at < self.started_at:
+            raise ValueError("expected_end_at must not be before started_at")
+        return self
+
+
+class UseCyclePatch(StrictModel):
+    label: str | None = Field(default=None, max_length=200)
+    expected_end_at: datetime | None = None
+    note: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("expected_end_at")
+    @classmethod
+    def timezone_required(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("expected_end_at must include a UTC offset")
+        return value
+
+
+class UseCycleTransition(StrictModel):
+    ended_at: datetime | None = None
+
+    @field_validator("ended_at")
+    @classmethod
+    def timezone_required(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("ended_at must include a UTC offset")
+        return value
+
+
+class ForecastGenerate(StrictModel):
+    as_of: date | None = None
+    timezone: str = Field(default="Asia/Shanghai", max_length=64)
+    horizon_days: int = Field(default=90, ge=1, le=365)
+
+    @field_validator("timezone")
+    @classmethod
+    def valid_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("timezone must be a valid IANA name") from exc
+        return value
+
+
+SENSITIVE_INTAKE_KEYS = {
+    "authorization",
+    "cookie",
+    "password",
+    "secret",
+    "token",
+    "access_token",
+    "refresh_token",
+    "api_key",
+}
+
+
+def _contains_sensitive_key(value: Any) -> bool:
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            normalized = str(key).strip().lower().replace("-", "_")
+            compact = normalized.replace("_", "")
+            if (
+                normalized in SENSITIVE_INTAKE_KEYS
+                or compact.endswith(("token", "password", "secret", "apikey"))
+                or compact in {"authorization", "cookie"}
+                or _contains_sensitive_key(nested)
+            ):
+                return True
+    elif isinstance(value, list):
+        return any(_contains_sensitive_key(item) for item in value)
+    return False
+
+
+class StructuredIntake(StrictModel):
+    source_external_id: str = Field(min_length=1, max_length=500)
+    captured_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    records: list[RecordCreate] = Field(min_length=1, max_length=50)
+
+    @field_validator("captured_at")
+    @classmethod
+    def captured_timezone_required(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("captured_at must include a UTC offset")
+        return value
+
+    @model_validator(mode="after")
+    def draft_only_and_safe(self) -> StructuredIntake:
+        if any(record.confirm for record in self.records):
+            raise ValueError("automatic intake may only create drafts")
+        if any(
+            record.occurred_at.tzinfo is None or record.occurred_at.utcoffset() is None
+            for record in self.records
+        ):
+            raise ValueError("intake record timestamps must include a UTC offset")
+        if _contains_sensitive_key(self.metadata):
+            raise ValueError("metadata must not contain credentials or tokens")
+        return self
+
+
+class DirectoryIntakeEnvelope(StrictModel):
+    adapter: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,29}$")
+    payload: StructuredIntake
 
 
 def jsonable(value: Any) -> Any:

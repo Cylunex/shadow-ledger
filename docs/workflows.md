@@ -196,3 +196,13 @@ inbox → considering → planned → due
 | 提醒任务重复 | reminder_key 唯一约束幂等 |
 | 跨项目引用失败 | 本地事实照常确认，Outbox 异步重试 |
 | 通知渠道不可用 | Reminder 保留，通知 Job 指数退避 |
+
+## 12. 自动抓单、UseCycle 与 Forecast
+
+Webhook 或受控目录先把来源包装成 StructuredIntake。服务校验 scope、external ID、凭据字段和所有
+候选的 `confirm=false`，随后在一个数据库事务内保存 CaptureSource、草稿与来源关系。相同内容可
+重放，内容不同的重复来源进入人工处理，不覆盖原文。
+
+UseCycle 只有用户操作才开始或结束；Purchase、Forecast 和后台 Worker 都不能替用户声明实际使用。
+Forecast 以日期和 horizon 获取事实快照，保存输入哈希，运行确定性算法并保存输出哈希。验证接口
+只基于原输入快照回算；后来新增事实通过新运行反映。

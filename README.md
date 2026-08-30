@@ -16,11 +16,13 @@ Shadow Ledger 是以消费为中心的个人收支记录与规划系统。它同
 - 消费明细、商家与商品身份；
 - 时间线、消费、计划和洞察页面；
 - Spending Intent、周期事项和分类目标；
+- 显式使用周期，以及可解释、可回算的周期/复购预测；
 - CSV/JSON 导入导出，京东、淘宝、美团、饿了么 Markdown 账单导入；
 - Asset 附件、解析草稿与来源级幂等去重；
 - 导入复核工作台、可撤销商家规范化规则与数据完整度；
 - 通过稳定引用把消费凭证交给 Archive，不复制文件；
 - OIDC、审计、Outbox 和后台 Worker。
+- 只读优先的 stdio MCP，以及只创建草稿的结构化 Webhook/受控目录抓单。
 
 ## Nexus 快捷操作
 
@@ -36,6 +38,9 @@ uv run alembic upgrade head
 uv run ledger-web
 ```
 
+MCP 与自动抓单的配置和安全边界见
+[MCP 与自动抓单](docs/mcp-and-intake.md)。两者默认关闭写入；任何自动来源只会创建草稿。
+
 实际数据库、OIDC、Session 和 Asset 凭据仅通过被忽略的本地配置或秘密文件提供。
 
 ## 文档
@@ -46,4 +51,6 @@ uv run ledger-web
 - [架构与安全](docs/architecture-security.md)
 - [跨项目集成](docs/integrations.md)
 - [Shadow Agent 插件接入](docs/agent-plugin.md)
+- [MCP 与自动抓单](docs/mcp-and-intake.md)
+- [通用运行说明](docs/operations.md)
 - [消费事实导入复核与运行证据](docs/import-review-and-evidence.md)

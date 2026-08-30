@@ -127,19 +127,31 @@
 - Platform capability lifecycle 可接收 Ledger observed evidence，隔离恢复演练可生成 restore-tested evidence；
 - 生产日志采样确认无自由文本、金额详情和凭据泄露。
 
-## 8. v2 门槛
+## 8. Phase 6：使用周期、确定性预测、MCP 与自动 intake
+
+已按 ADR 0006 解冻并交付：
+
+- 显式 UseCycle 状态、API、页面和版本冲突保护；
+- 带完整输入快照与输入/输出哈希的确定性 Forecast；
+- 官方 SDK v2 stdio MCP，默认只读、显式开关后只增加草稿；
+- 结构化 Webhook 与受控目录 intake，原文保留、external ID 幂等、凭据拒绝；
+- 所有自动路径继续只产提醒、建议或 draft。
+
+验收重点是历史 as_of 不读取未来消费、同输入得到相同 run/output hash、MCP 工具列表不含确认和
+导出、目录/Webhook 重放不重复建草稿。
+
+## 9. 后续门槛
 
 只有满足相应数据与需求门槛后才开始：
 
 | 能力 | 开始条件 |
 |---|---|
-| UseCycle | 用户持续表达开始/结束使用需求，且 ItemIdentity 已稳定 |
-| Forecast | 至少积累可解释的重复样本，并定义准确率/误报评估 |
+| 机器学习 Forecast | 确定性基线有足够回测数据，并定义准确率/误报评估 |
 | Agent 正式写入 | read + draft 插件稳定，ConfirmationReceipt 与正式写入风险测试通过 |
-| 邮件/平台自动导入 | 有稳定合法来源、幂等 external ID 和明确维护成本 |
+| 新来源适配器 | 有稳定合法来源、幂等 external ID 和明确维护成本 |
 | 高级预算 | 简单分类月度统计无法满足实际决策需求 |
 
-## 9. 测试策略
+## 10. 测试策略
 
 ### 单元/性质测试
 
@@ -172,7 +184,7 @@
 - Asset/Health/Travel 上游故障恢复；
 - Android WebView 与普通浏览器关键路径。
 
-## 10. Definition of Done
+## 11. Definition of Done
 
 一个阶段只有同时满足以下条件才算完成：
 

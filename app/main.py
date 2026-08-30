@@ -43,7 +43,7 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
         init_database(database_url)
         yield
 
-    app = FastAPI(title="Shadow Ledger", version="1.0.0", lifespan=lifespan)
+    app = FastAPI(title="Shadow Ledger", version="1.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.agent_access = AgentAccess(
         registry_path=settings.agent_registry_path,

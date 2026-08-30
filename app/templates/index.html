@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>Shadow Ledger</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260830-import-review">
-  <script src="{{ prefix }}/static/app.js?v=20260830-import-review" defer></script>
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260831-forecast">
+  <script src="{{ prefix }}/static/app.js?v=20260831-forecast" defer></script>
 </head>
 <body data-page="{{ page }}" data-prefix="{{ prefix }}">
   <a class="skip" href="#main">跳到主要内容</a>
@@ -50,8 +50,8 @@
       <button id="load-more" class="quiet load-more" type="button" hidden>加载更多</button>
     </section>
     <section id="consumption-page" class="page"><h2>消费</h2><p class="muted">按场景回看消费内容、原始商家与体验。</p><div id="scene-cards" class="card-grid"></div><h3>常去商家</h3><div id="merchant-list" class="list"></div><h3>常买内容</h3><div id="item-list" class="list"></div></section>
-    <section id="planning-page" class="page"><h2>计划</h2><div class="tabs"><button data-plan="intents" class="active">想要</button><button data-plan="commitments">周期</button><button data-plan="reminders">提醒</button></div><div id="planning-list" class="list"></div><button id="add-plan" class="primary">添加计划</button></section>
-    <section id="insights-page" class="page"><h2>洞察</h2><p class="muted">所有金额统计只包含已确认事实，未知金额消费只进入频率。</p><div id="insight-summary" class="card-grid"></div><h3>数据完整度与预测就绪度</h3><div id="quality-summary" class="list"></div><h3>消费场景频率</h3><div id="insight-scenes" class="bars"></div><h3>消费目标</h3><div id="budget-list" class="list"></div></section>
+    <section id="planning-page" class="page"><h2>计划</h2><div class="tabs"><button data-plan="intents" class="active">想要</button><button data-plan="commitments">周期</button><button data-plan="cycles">使用周期</button><button data-plan="reminders">提醒</button></div><div id="planning-list" class="list"></div><button id="add-plan" class="primary">添加计划</button></section>
+    <section id="insights-page" class="page"><h2>洞察</h2><p class="muted">所有金额统计只包含已确认事实，未知金额消费只进入频率；预测只是可重算建议。</p><div id="insight-summary" class="card-grid"></div><h3>数据完整度</h3><div id="quality-summary" class="list"></div><div class="section-title"><h3>消费预测</h3><button id="forecast-generate" type="button">重新计算</button></div><div id="forecast-list" class="list"></div><h3>消费场景频率</h3><div id="insight-scenes" class="bars"></div><h3>消费目标</h3><div id="budget-list" class="list"></div></section>
   </main>
   <nav class="bottom-nav" aria-label="主导航"><a href="{{ prefix }}/" data-page="records">记录</a><a href="{{ prefix }}/consumption" data-page="consumption">消费</a><a href="{{ prefix }}/planning" data-page="planning">计划</a><a href="{{ prefix }}/insights" data-page="insights">洞察</a></nav>
   <dialog id="dialog"><div><button class="dialog-close" type="button" aria-label="关闭">×</button><div id="dialog-body"></div></div></dialog>

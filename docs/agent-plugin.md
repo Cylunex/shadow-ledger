@@ -58,3 +58,9 @@ Ledger Profile 可按自身审核边界选择草稿 capability。实例配置只
 普通 Profile 不注册隐藏的正式入账、导出、难撤销调整或资金执行。Nexus 用户审核后可调用隐藏
 L2 入账能力；导出和难撤销调整至少 L3，并在开放前实现 ConfirmationReceipt；任何资金执行均为
 L4 且不进入普通 Profile。
+
+## 与 stdio MCP 的区别
+
+`ledger-mcp` 是用户主动配置、在本机由 MCP host 启动的独立入口，不进入 Platform Agent Manifest，
+也不复用 Agent Bearer/grant。它通过权限受限 owner 文件绑定单一工作区，默认只读；显式开启写入
+后也只注册 money-only draft。两条入口都不向模型开放正式确认、撤销、导出或资金操作。

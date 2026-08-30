@@ -240,13 +240,32 @@ Ledger 不通过目标 URI 拼接内网 HTTP 请求。解析、权限和跳转�
 | POST | `/import-reviews/{id}/resolve` | 带 revision 记录用户复核，可选学习商家规则 |
 | GET | `/merchant-normalization-rules` | 查看解释、证据数与活动状态 |
 | POST | `/merchant-normalization-rules/{id}/revoke` | 带 revision 撤销规则，不改写历史原文 |
-| GET | `/insights/data-quality` | 数据完整度与 Forecast 评估就绪度；不生成预测 |
+| GET | `/insights/data-quality` | 数据完整度与 Forecast 样本就绪度；不隐式生成预测 |
 | POST/GET | `/records/{id}/archive-evidence` | 以 AssetBinding + `shadow://archive/` 稳定引用交接凭证 |
 | POST | `/records/{id}/archive-evidence/{link_id}/release` | 逻辑释放 Archive 关联 |
 
 导入复核不是账户对账。退款候选、金额异常和商家建议都不会自动改变已确认事实；导入仍只创建草稿。
 
-## 11. 服务与未来 Agent 鉴权
+## 11. UseCycle、Forecast 与自动 intake
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET/POST | `/use-cycles` | 查询或显式开始使用周期；创建要求幂等键 |
+| PATCH | `/use-cycles/{id}` | 带 If-Match 修正进行中的周期 |
+| POST | `/use-cycles/{id}/complete` | 显式结束，记录用户事实 |
+| POST | `/use-cycles/{id}/cancel` | 取消错误或不再跟踪的周期 |
+| POST | `/forecasts/generate` | 按 as_of、IANA timezone 与 1—365 天 horizon 生成或重放确定性预测 |
+| GET | `/forecasts/latest` | 最近运行及建议 |
+| GET | `/forecasts/{id}` | 指定不可变运行快照的结果 |
+| POST | `/forecasts/{id}/verify` | 用保存的输入快照重新计算并校验输出哈希 |
+| POST | `/forecast-items/{id}/dismiss` | 带 If-Match 忽略建议，不修改事实 |
+| POST | `/intake/webhooks/{adapter}` | 具备 `ledger.capture` 的结构化抓单入口 |
+
+UseCycle 只能引用同 owner 的已确认 Record；购买不会自动创建 UseCycle。Forecast 只产生周期到期、
+复购间隔和使用周期结束建议。Webhook 必须提供稳定 external ID，所有候选必须
+`confirm=false`，并拒绝凭据字段。
+
+## 12. 服务、Agent 与 MCP 鉴权
 
 服务 Token 使用文件注入的哈希映射，并分配最小 scope：
 
@@ -271,3 +290,6 @@ Shadow Agent 使用独立 `/api/machine/v1/agent` 合同，不复用浏览器 Se
 汇率或 `confirm` 字段，金额使用 Decimal，币种和 IANA timezone 由确定性代码验证。正式确认仍
 只能由 Ledger 用户会话或未来受控确认合同完成；普通 `shadow-ledger` Profile 不注册正式入账、
 导出、难撤销调整或资金执行能力。
+
+stdio MCP 不复用浏览器 Session 或 Agent registry。它使用独立进程、最小数据库用户和受限 owner
+文件，默认只注册读取工具；显式开启后也只增加 money-only draft 工具，不提供确认、撤销或导出。

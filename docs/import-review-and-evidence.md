@@ -44,7 +44,8 @@ Outbox 事件只携带 Asset/Reference ID 与稳定 URI。解除关联是可审�
 
 `GET /api/v1/insights/data-quality` 报告金额、原始商家、规范商家覆盖率以及待复核数量。
 `prediction_readiness` 只说明样本与覆盖率是否足以开始评估，并固定返回
-`creates_forecast: false`。它不会建立 Forecast 表、训练模型或生成预测。
+`creates_forecast: false`。该查询本身不会生成预测；用户可通过独立 Forecast API 按需运行确定性、
+可回算算法，它不会训练模型或生成消费事实。
 
 ## Platform lifecycle 与恢复验证
 
@@ -70,4 +71,4 @@ Observed 入口要求每个已选择的 `shadow-ledger` capability 都有明确 
 `cleanup_completed=true`，并要求 contract、data、health 三类检查全部通过。备份内容和用户事实不进入
 Platform；输出只是一份可关联的恢复证据。
 
-Forecast 与 UseCycle 仍按冻结计划有意延期。
+Forecast 与 UseCycle 已按 ADR 0006 解冻；导入复核仍不会自动触发二者或确认任何消费事实。

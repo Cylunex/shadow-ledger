@@ -11,9 +11,9 @@ from starlette.requests import Request
 
 from app.config import Settings
 from app.db import Base, make_engine
+from app.external import is_lan_bypass
 from app.models import LedgerRecord, MoneyEntry
 from app.oidc import pkce_challenge, safe_return_to
-from app.external import is_lan_bypass
 from app.security import current_actor, validate_csrf
 
 

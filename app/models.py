@@ -644,7 +644,10 @@ class ArchiveEvidenceLink(Timestamps, Base):
     __tablename__ = "archive_evidence_links"
     __table_args__ = (
         UniqueConstraint(
-            "owner_id", "record_id", "asset_binding_id", "archive_uri",
+            "owner_id",
+            "record_id",
+            "asset_binding_id",
+            "archive_uri",
             name="uq_archive_evidence_link",
         ),
         CheckConstraint("revision > 0", name="ck_archive_evidence_revision"),
@@ -658,3 +661,93 @@ class ArchiveEvidenceLink(Timestamps, Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     revision: Mapped[int] = mapped_column(Integer, default=1)
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UseCycle(Timestamps, Base):
+    """A user-declared period of actually using an item, never inferred from purchase alone."""
+
+    __tablename__ = "use_cycles"
+    __table_args__ = (
+        CheckConstraint("state IN ('active','completed','cancelled')", name="ck_use_cycle_state"),
+        CheckConstraint("revision > 0", name="ck_use_cycle_revision"),
+        CheckConstraint(
+            "expected_end_at IS NULL OR expected_end_at >= started_at",
+            name="ck_use_cycle_expected_end",
+        ),
+        CheckConstraint(
+            "(state='active' AND ended_at IS NULL) OR "
+            "(state IN ('completed','cancelled') AND ended_at IS NOT NULL AND ended_at >= started_at)",
+            name="ck_use_cycle_state_time",
+        ),
+        Index("idx_use_cycles_owner_state", "owner_id", "state", "started_at"),
+        Index("idx_use_cycles_item", "owner_id", "item_identity_id", "started_at"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    owner_id: Mapped[str] = mapped_column(Text)
+    item_identity_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("item_identities.id"))
+    source_record_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ledger_records.id"))
+    label: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expected_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    state: Mapped[str] = mapped_column(String(20), default="active")
+    note: Mapped[str] = mapped_column(Text, default="")
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class ForecastRun(Base):
+    """Immutable, replayable input snapshot for one deterministic forecast calculation."""
+
+    __tablename__ = "forecast_runs"
+    __table_args__ = (
+        CheckConstraint("horizon_days BETWEEN 1 AND 365", name="ck_forecast_horizon"),
+        UniqueConstraint(
+            "owner_id", "algorithm_version", "input_hash", name="uq_forecast_run_input"
+        ),
+        Index("idx_forecast_runs_owner_created", "owner_id", "created_at"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    owner_id: Mapped[str] = mapped_column(Text)
+    as_of: Mapped[date] = mapped_column(Date)
+    timezone: Mapped[str] = mapped_column(String(64))
+    horizon_days: Mapped[int] = mapped_column(Integer)
+    algorithm_version: Mapped[str] = mapped_column(String(40))
+    input_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    input_hash: Mapped[bytes] = mapped_column(LargeBinary)
+    output_hash: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class ForecastItem(Timestamps, Base):
+    """A derived suggestion. It never participates in confirmed Ledger summaries."""
+
+    __tablename__ = "forecast_items"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('commitment_due','repeat_purchase','use_cycle_end')",
+            name="ck_forecast_item_kind",
+        ),
+        CheckConstraint("state IN ('active','dismissed')", name="ck_forecast_item_state"),
+        CheckConstraint("confidence BETWEEN 0 AND 1", name="ck_forecast_confidence"),
+        CheckConstraint("revision > 0", name="ck_forecast_item_revision"),
+        CheckConstraint(
+            "expected_amount IS NULL OR (expected_amount > 0 AND currency IS NOT NULL)",
+            name="ck_forecast_item_amount",
+        ),
+        UniqueConstraint("run_id", "source_key", name="uq_forecast_item_source"),
+        Index("idx_forecast_items_run_time", "run_id", "predicted_at"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("forecast_runs.id"))
+    source_key: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(30))
+    target_uri: Mapped[str] = mapped_column(Text)
+    predicted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expected_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    currency: Mapped[str | None] = mapped_column(String(3))
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4))
+    explanation: Mapped[str] = mapped_column(Text)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSON)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    state: Mapped[str] = mapped_column(String(20), default="active")
+    revision: Mapped[int] = mapped_column(Integer, default=1)

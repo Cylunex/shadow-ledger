@@ -31,8 +31,14 @@ ledger-worker
 ├── Capture 解析
 ├── Outbox 投递
 ├── 周期提醒
+├── 受控目录 intake
 ├── 导入/导出
 └── 对账任务
+
+ledger-mcp（按需启动）
+├── stdio transport
+├── owner 文件绑定
+└── 只读 + 显式开关后的草稿工具
 
 PostgreSQL
 └── 领域事实 + Session + Job/Outbox
@@ -102,6 +108,10 @@ Host 只能从可信 allowlist 选择，不能根据任意 `Host`/`X-Forwarded-H
 - 日志不记录 Authorization、Cookie、Upload Token、OIDC code/state/nonce；
 - Token 支持双 key 轮换窗口和最后使用审计；
 - v1 默认不授予任何客户端确认正式事实的 scope。
+
+MCP 直接访问数据库时必须使用独立最小权限用户和只读优先开关。owner 只允许从权限受限文件读取，
+不得成为 Tool 参数。自动 intake 的 metadata 递归拒绝凭据字段；目录必须是进程专用、不可由 Web
+任意写入的本地目录。
 
 Shadow Agent 使用与通用服务 Token 分离的 registry 和 secrets 目录。鉴权固定 `ledger`
 audience，并同时检查 capability scope 与 `ledger_agent_grants` 中的工作区级权限。一个 Agent

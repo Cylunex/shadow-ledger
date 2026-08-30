@@ -8,3 +8,11 @@ resources:
     uri_template: shadow://ledger/budget-targets/{budget_id}
     owner: ledger
     resource_grant_required: true
+  - type: ledger-use-cycle
+    uri_template: shadow://ledger/use-cycles/{use_cycle_id}
+    owner: ledger
+    resource_grant_required: true
+  - type: ledger-forecast
+    uri_template: shadow://ledger/forecasts/{forecast_id}
+    owner: ledger
+    resource_grant_required: true

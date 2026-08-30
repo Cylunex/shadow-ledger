@@ -1,6 +1,6 @@
 [project]
 name = "shadow-ledger"
-version = "1.0.0"
+version = "1.1.0"
 description = "以消费为中心的个人收支记录与规划系统"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -10,6 +10,7 @@ dependencies = [
   "fastapi>=0.116,<1",
   "httpx>=0.28,<1",
   "jinja2>=3.1,<4",
+  "mcp>=2,<3",
   "psycopg[binary]>=3.2,<4",
   "pydantic>=2.11,<3",
   "pydantic-settings>=2.10,<3",
@@ -31,6 +32,7 @@ dev = [
 [project.scripts]
 ledger-web = "app.main:run"
 ledger-worker = "app.worker:run"
+ledger-mcp = "app.mcp_server:run"
 ledger-observed-evidence = "scripts.emit_observed_evidence:main"
 ledger-restore-verify = "scripts.verify_restore:main"
 

@@ -7,6 +7,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from dateutil.relativedelta import relativedelta
 from fastapi import APIRouter, Depends, Header, Query, Response
@@ -29,6 +30,8 @@ from app.models import (
     ConsumptionEvent,
     ConsumptionLine,
     ExternalReference,
+    ForecastItem,
+    ForecastRun,
     IdentitySuggestion,
     ImportBatch,
     ImportReviewItem,
@@ -45,6 +48,7 @@ from app.models import (
     RecurringCommitment,
     Reminder,
     SpendingIntent,
+    UseCycle,
 )
 from app.schemas import (
     AliasCreate,
@@ -57,6 +61,7 @@ from app.schemas import (
     CategoryCreate,
     CategoryPatch,
     CommitmentCreate,
+    ForecastGenerate,
     ImportCommit,
     ImportPreview,
     ImportReviewResolve,
@@ -69,10 +74,15 @@ from app.schemas import (
     RecordPatch,
     ReferenceCreate,
     RuleRevoke,
+    StructuredIntake,
     TextCaptureCreate,
+    UseCycleCreate,
+    UseCyclePatch,
+    UseCycleTransition,
     jsonable,
 )
 from app.security import Actor, current_actor, require_scope
+from app.services.forecast import generate_forecast, serialize_run, verify_run
 from app.services.import_review import (
     amount_anomaly_reason,
     apply_normalization_rule,
@@ -81,6 +91,7 @@ from app.services.import_review import (
     refund_candidate,
     serialize_review_item,
 )
+from app.services.intake import ingest_structured
 from app.services.records import (
     add_money_entry,
     confirm_record,
@@ -107,6 +118,10 @@ def etag(response: Response, revision: int) -> None:
 
 def actor_id(actor: Actor) -> str:
     return actor.owner_id if actor.actor_type == "user" else "service"
+
+
+def as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def owned(db: Session, model, resource_id: uuid.UUID, owner_id: str, name: str):
@@ -1825,6 +1840,265 @@ def reminder_action(
     row.state = states[action]
     db.commit()
     return simple_model(row, ("id", "state"))
+
+
+USE_CYCLE_FIELDS = (
+    "id",
+    "item_identity_id",
+    "source_record_id",
+    "label",
+    "started_at",
+    "expected_end_at",
+    "ended_at",
+    "state",
+    "note",
+    "revision",
+)
+
+
+@router.get("/use-cycles")
+def use_cycles_list(
+    state: str | None = None,
+    item_identity_id: uuid.UUID | None = None,
+    actor: Actor = Depends(require_scope("ledger.read")),
+    db: Session = Depends(get_db),
+):
+    statement = select(UseCycle).where(UseCycle.owner_id == actor.owner_id)
+    if state:
+        if state not in {"active", "completed", "cancelled"}:
+            raise AppError(422, "invalid_state", "使用周期状态无效")
+        statement = statement.where(UseCycle.state == state)
+    if item_identity_id:
+        statement = statement.where(UseCycle.item_identity_id == item_identity_id)
+    rows = db.scalars(statement.order_by(UseCycle.started_at.desc(), UseCycle.id.desc()))
+    return {"items": [simple_model(row, USE_CYCLE_FIELDS) for row in rows]}
+
+
+@router.post("/use-cycles", status_code=201)
+def use_cycles_create(
+    data: UseCycleCreate,
+    response: Response,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    actor: Actor = Depends(require_scope("ledger.confirm")),
+    db: Session = Depends(get_db),
+):
+    owned(db, ItemIdentity, data.item_identity_id, actor.owner_id, "item")
+    if data.source_record_id:
+        source = get_record(db, actor.owner_id, data.source_record_id)
+        if source.state != "confirmed":
+            raise AppError(422, "confirmed_record_required", "使用周期只能引用已确认记录")
+    replay = replayed_create(
+        db,
+        actor,
+        "use-cycles.create",
+        idempotency_key,
+        data.model_dump(),
+        UseCycle,
+        "use_cycle",
+    )
+    if replay:
+        etag(response, replay.revision)
+        return simple_model(replay, USE_CYCLE_FIELDS)
+    row = UseCycle(owner_id=actor.owner_id, state="active", **data.model_dump())
+    db.add(row)
+    db.flush()
+    remember_create(
+        db, actor, "use-cycles.create", idempotency_key or "", data.model_dump(), row.id
+    )
+    db.add(
+        AuditEvent(
+            owner_id=actor.owner_id,
+            actor_type=actor.actor_type,
+            actor_id=actor_id(actor),
+            action="use_cycle.started",
+            aggregate_type="use_cycle",
+            aggregate_id=row.id,
+        )
+    )
+    db.commit()
+    etag(response, row.revision)
+    return simple_model(row, USE_CYCLE_FIELDS)
+
+
+@router.patch("/use-cycles/{cycle_id}")
+def use_cycles_patch(
+    cycle_id: uuid.UUID,
+    data: UseCyclePatch,
+    response: Response,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    actor: Actor = Depends(require_scope("ledger.confirm")),
+    db: Session = Depends(get_db),
+):
+    row = owned(db, UseCycle, cycle_id, actor.owner_id, "use_cycle")
+    if row.revision != parse_etag(if_match):
+        raise AppError(409, "revision_conflict", "使用周期已被更新")
+    if row.state != "active":
+        raise AppError(409, "invalid_state_transition", "只能修改进行中的使用周期")
+    values = data.model_dump(exclude_unset=True)
+    if values.get("expected_end_at") is not None and as_utc(values["expected_end_at"]) < as_utc(
+        row.started_at
+    ):
+        raise AppError(422, "invalid_expected_end", "预计结束时间不能早于开始时间")
+    for field, value in values.items():
+        setattr(row, field, value)
+    row.revision += 1
+    db.commit()
+    etag(response, row.revision)
+    return simple_model(row, USE_CYCLE_FIELDS)
+
+
+@router.post("/use-cycles/{cycle_id}/{action}")
+def use_cycles_transition(
+    cycle_id: uuid.UUID,
+    action: str,
+    data: UseCycleTransition,
+    response: Response,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    actor: Actor = Depends(require_scope("ledger.confirm")),
+    db: Session = Depends(get_db),
+):
+    if action not in {"complete", "cancel"}:
+        raise AppError(404, "route_not_found", "操作不存在")
+    row = owned(db, UseCycle, cycle_id, actor.owner_id, "use_cycle")
+    if row.revision != parse_etag(if_match):
+        raise AppError(409, "revision_conflict", "使用周期已被更新")
+    if row.state != "active":
+        raise AppError(409, "invalid_state_transition", "使用周期已经结束")
+    ended_at = data.ended_at or datetime.now(UTC)
+    if as_utc(ended_at) < as_utc(row.started_at):
+        raise AppError(422, "invalid_end_time", "结束时间不能早于开始时间")
+    row.state = "completed" if action == "complete" else "cancelled"
+    row.ended_at = ended_at
+    row.revision += 1
+    db.add(
+        AuditEvent(
+            owner_id=actor.owner_id,
+            actor_type=actor.actor_type,
+            actor_id=actor_id(actor),
+            action=f"use_cycle.{row.state}",
+            aggregate_type="use_cycle",
+            aggregate_id=row.id,
+        )
+    )
+    db.commit()
+    etag(response, row.revision)
+    return simple_model(row, USE_CYCLE_FIELDS)
+
+
+@router.post("/forecasts/generate", status_code=201)
+def forecasts_generate(
+    data: ForecastGenerate,
+    actor: Actor = Depends(require_scope("ledger.read")),
+    db: Session = Depends(get_db),
+):
+    run, items, replayed = generate_forecast(
+        db,
+        actor.owner_id,
+        data.as_of or datetime.now(ZoneInfo(data.timezone)).date(),
+        data.timezone,
+        data.horizon_days,
+    )
+    return serialize_run(run, items, replayed)
+
+
+def _forecast_run(db: Session, owner_id: str, run_id: uuid.UUID) -> ForecastRun:
+    row = db.scalar(
+        select(ForecastRun).where(ForecastRun.id == run_id, ForecastRun.owner_id == owner_id)
+    )
+    if row is None:
+        raise AppError(404, "forecast_not_found", "预测不存在")
+    return row
+
+
+def _forecast_response(db: Session, run: ForecastRun) -> dict[str, Any]:
+    items = list(
+        db.scalars(
+            select(ForecastItem)
+            .where(ForecastItem.run_id == run.id)
+            .order_by(ForecastItem.predicted_at, ForecastItem.source_key)
+        )
+    )
+    return serialize_run(run, items)
+
+
+@router.get("/forecasts/latest")
+def forecasts_latest(
+    actor: Actor = Depends(require_scope("ledger.read")), db: Session = Depends(get_db)
+):
+    row = db.scalar(
+        select(ForecastRun)
+        .where(ForecastRun.owner_id == actor.owner_id)
+        .order_by(ForecastRun.created_at.desc(), ForecastRun.id.desc())
+        .limit(1)
+    )
+    return {"run": _forecast_response(db, row) if row else None}
+
+
+@router.get("/forecasts/{run_id}")
+def forecasts_get(
+    run_id: uuid.UUID,
+    actor: Actor = Depends(require_scope("ledger.read")),
+    db: Session = Depends(get_db),
+):
+    return _forecast_response(db, _forecast_run(db, actor.owner_id, run_id))
+
+
+@router.post("/forecasts/{run_id}/verify")
+def forecasts_verify(
+    run_id: uuid.UUID,
+    actor: Actor = Depends(require_scope("ledger.read")),
+    db: Session = Depends(get_db),
+):
+    row = _forecast_run(db, actor.owner_id, run_id)
+    return {
+        "run_id": str(row.id),
+        "algorithm_version": row.algorithm_version,
+        "verified": verify_run(row),
+    }
+
+
+@router.post("/forecast-items/{item_id}/dismiss")
+def forecast_item_dismiss(
+    item_id: uuid.UUID,
+    response: Response,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    actor: Actor = Depends(require_scope("ledger.write-draft")),
+    db: Session = Depends(get_db),
+):
+    row = db.scalar(
+        select(ForecastItem)
+        .join(ForecastRun, ForecastItem.run_id == ForecastRun.id)
+        .where(ForecastItem.id == item_id, ForecastRun.owner_id == actor.owner_id)
+    )
+    if row is None:
+        raise AppError(404, "forecast_item_not_found", "预测项不存在")
+    if row.revision != parse_etag(if_match):
+        raise AppError(409, "revision_conflict", "预测项已被更新")
+    row.state = "dismissed"
+    row.revision += 1
+    db.commit()
+    etag(response, row.revision)
+    return {"id": str(row.id), "state": row.state, "revision": row.revision}
+
+
+@router.post("/intake/webhooks/{adapter}", status_code=201)
+def intake_webhook(
+    adapter: str,
+    data: StructuredIntake,
+    actor: Actor = Depends(require_scope("ledger.capture")),
+    db: Session = Depends(get_db),
+):
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,29}", adapter):
+        raise AppError(422, "invalid_intake_adapter", "抓单适配器名称无效")
+    return ingest_structured(
+        db,
+        actor.owner_id,
+        "webhook",
+        adapter,
+        data,
+        actor_id(actor),
+        actor.actor_type,
+    )
 
 
 BUDGET_FIELDS = (

@@ -492,6 +492,60 @@ CREATE TABLE archive_evidence_links (
     UNIQUE (owner_id, record_id, asset_binding_id, archive_uri)
 );
 
+CREATE TABLE use_cycles (
+    id                  UUID PRIMARY KEY,
+    owner_id            TEXT NOT NULL,
+    item_identity_id    UUID NOT NULL REFERENCES item_identities(id),
+    source_record_id    UUID REFERENCES ledger_records(id),
+    label               TEXT,
+    started_at          TIMESTAMPTZ NOT NULL,
+    expected_end_at     TIMESTAMPTZ,
+    ended_at            TIMESTAMPTZ,
+    state               TEXT NOT NULL CHECK (state IN ('active', 'completed', 'cancelled')),
+    note                TEXT NOT NULL DEFAULT '',
+    revision            INTEGER NOT NULL CHECK (revision > 0),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (expected_end_at IS NULL OR expected_end_at >= started_at),
+    CHECK ((state = 'active' AND ended_at IS NULL) OR
+           (state IN ('completed', 'cancelled') AND ended_at >= started_at))
+);
+
+CREATE TABLE forecast_runs (
+    id                  UUID PRIMARY KEY,
+    owner_id            TEXT NOT NULL,
+    as_of               DATE NOT NULL,
+    timezone            TEXT NOT NULL,
+    horizon_days        INTEGER NOT NULL CHECK (horizon_days BETWEEN 1 AND 365),
+    algorithm_version   TEXT NOT NULL,
+    input_snapshot      JSONB NOT NULL,
+    input_hash          BYTEA NOT NULL,
+    output_hash         BYTEA NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (owner_id, algorithm_version, input_hash)
+);
+
+CREATE TABLE forecast_items (
+    id                  UUID PRIMARY KEY,
+    run_id              UUID NOT NULL REFERENCES forecast_runs(id),
+    source_key          TEXT NOT NULL,
+    kind                TEXT NOT NULL CHECK (kind IN ('commitment_due', 'repeat_purchase', 'use_cycle_end')),
+    target_uri          TEXT NOT NULL,
+    predicted_at        TIMESTAMPTZ NOT NULL,
+    expected_amount     NUMERIC(18,4),
+    currency            CHAR(3),
+    confidence          NUMERIC(5,4) NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+    explanation         TEXT NOT NULL,
+    evidence            JSONB NOT NULL,
+    expires_at          TIMESTAMPTZ NOT NULL,
+    state               TEXT NOT NULL CHECK (state IN ('active', 'dismissed')),
+    revision            INTEGER NOT NULL CHECK (revision > 0),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (run_id, source_key),
+    CHECK (expected_amount IS NULL OR (expected_amount > 0 AND currency IS NOT NULL))
+);
+
 -- Cross-table invariants which migrations must implement with deferred constraint
 -- triggers or transaction-level service validation:
 -- 1. consumption records have exactly one ConsumptionEvent;
