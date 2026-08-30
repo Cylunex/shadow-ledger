@@ -6,6 +6,49 @@ presentation:
   icon: ledger
   color: "#FB7185"
   order: 20
+entities:
+  - id: expense
+    label: 本月支出
+    class: money
+    source_surface_id: today
+    value_pointer: /expense
+    unit: CNY
+    icon: expense
+    tone: attention
+    sensitivity: sensitive
+    freshness_seconds: 86400
+    order: 10
+    action_ids: [quick-expense]
+  - id: income
+    label: 本月收入
+    class: money
+    source_surface_id: today
+    value_pointer: /income
+    unit: CNY
+    icon: income
+    tone: good
+    sensitivity: sensitive
+    freshness_seconds: 86400
+    order: 20
+    action_ids: [quick-income]
+  - id: refund
+    label: 本月退款
+    class: money
+    source_surface_id: today
+    value_pointer: /refund
+    unit: CNY
+    sensitivity: sensitive
+    freshness_seconds: 86400
+    order: 30
+  - id: net-spending
+    label: 本月净支出
+    class: money
+    source_surface_id: today
+    value_pointer: /net_spending
+    unit: CNY
+    sensitivity: sensitive
+    freshness_seconds: 86400
+    order: 40
 surfaces:
   - id: today
     type: summary
