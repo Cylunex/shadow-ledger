@@ -260,6 +260,57 @@ class AssetComplete(StrictModel):
     usage: str = Field(default="evidence", max_length=50)
 
 
+class ImportReviewResolve(StrictModel):
+    revision: int = Field(ge=1)
+    merchant_id: uuid.UUID | None = None
+    refund_record_id: uuid.UUID | None = None
+    accept_amount_anomaly: bool = False
+    learn_merchant_rule: bool = False
+    dismiss: bool = False
+    note: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def has_resolution(self) -> ImportReviewResolve:
+        if not any(
+            (
+                self.merchant_id,
+                self.refund_record_id,
+                self.accept_amount_anomaly,
+                self.dismiss,
+            )
+        ):
+            raise ValueError("at least one review decision is required")
+        if self.learn_merchant_rule and self.merchant_id is None:
+            raise ValueError("learning a rule requires merchant_id")
+        if self.dismiss and any(
+            (self.merchant_id, self.refund_record_id, self.accept_amount_anomaly)
+        ):
+            raise ValueError("dismiss cannot be combined with other review decisions")
+        return self
+
+
+class RuleRevoke(StrictModel):
+    revision: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class ArchiveEvidenceCreate(StrictModel):
+    asset_binding_id: uuid.UUID
+    archive_uri: str = Field(max_length=2000)
+
+    @field_validator("archive_uri")
+    @classmethod
+    def archive_reference(cls, value: str) -> str:
+        if not value.startswith("shadow://archive/"):
+            raise ValueError("archive_uri must be a shadow://archive/ URI")
+        return value
+
+
+class ArchiveEvidenceRelease(StrictModel):
+    revision: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=500)
+
+
 def jsonable(value: Any) -> Any:
     if isinstance(value, Decimal):
         return format(value, ".4f")

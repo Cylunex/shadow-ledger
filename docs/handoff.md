@@ -16,8 +16,11 @@ app/oidc.py                 Code + PKCE 与不透明 Session
 app/integrations.py         Asset 与 Capture provider ports
 app/worker.py               PostgreSQL Job/Outbox/Reminder
 app/machine.py              Shadow Agent read + draft 机器 API
+app/services/import_review.py 导入复核、可撤销商家规则与质量指标
+app/operational_evidence.py Platform observed evidence 构建
 shadow-plugin.yaml          运行时无关插件 Definition
 migrations/                 Alembic 历史
+scripts/                    observed evidence 与隔离恢复验证入口
 tests/                      领域、HTTP、安全和 OIDC 测试
 deploy/                     脱敏部署模板
 ```
@@ -53,3 +56,5 @@ deploy/                     脱敏部署模板
 2. 使用 PostgreSQL 16 执行空库与上一发布版本迁移演练；
 3. 接入生产备份、指标抓取和告警；
 4. 积累真实事实后评估 v2 门槛，不提前实现 Forecast/UseCycle/Agent。
+
+当前已增加消费事实导入复核、Archive 稳定引用和预测评估就绪度；Forecast/UseCycle 仍未实现。

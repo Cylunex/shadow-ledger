@@ -161,6 +161,8 @@ Ledger 不复制持仓明细和行情历史。
 ## 8. Archive 与 Garden
 
 - 说明书、保修材料、长期发票档案由 Archive 管语义，文件仍在 Asset；Ledger 可以保存 Archive URI。
+- Ledger 的 `ArchiveEvidenceLink` 只保存已有 AssetBinding 与 `shadow://archive/...` 的稳定关系；
+  Outbox 只发送 Asset/Reference ID 和 URI，不发送文件字节、临时下载地址或服务凭据。
 - Garden 是公开内容。Ledger 的私人评价和消费历史不自动发布；用户显式发布时由 Garden 创建自己
   的记录并保存 Ledger URI。
 
@@ -193,3 +195,10 @@ ledger.record.voided
 - Commitment 已过 due 时间但没有 occurrence Reminder。
 
 对账只报告或安全补建幂等关系，不自动删除事实。
+
+## 11. Platform conformance 与恢复证据
+
+Ledger 的 observed probe 结果转换为 `shadow.conformance-evidence.v1`，并严格绑定 Platform 生成的
+deployment/build。隔离恢复演练使用 `shadow.restore-drill.v1`，由 Platform SDK 拒绝生产目标、未清理
+环境、失败/缺失的 contract/data/health 检查和 artifact 哈希不匹配。详情见
+[`import-review-and-evidence.md`](import-review-and-evidence.md)。

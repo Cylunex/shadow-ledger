@@ -31,7 +31,7 @@ def test_health_and_readiness(client):
 
 def test_draft_review_actions_are_present_in_browser_ui(client):
     page = client.get("/")
-    script = client.get("/static/app.js?v=20260826-record-actions-3")
+    script = client.get("/static/app.js?v=20260830-import-review")
 
     assert page.status_code == script.status_code == 200
     assert 'id="batch-confirm"' in page.text
@@ -39,8 +39,8 @@ def test_draft_review_actions_are_present_in_browser_ui(client):
     assert 'id="filter-query"' in page.text
     assert 'id="filter-state"' in page.text
     assert 'id="load-more"' in page.text
-    assert "app.css?v=20260826-record-actions" in page.text
-    assert "app.js?v=20260826-record-actions-3" in page.text
+    assert "app.css?v=20260830-import-review" in page.text
+    assert "app.js?v=20260830-import-review" in page.text
     assert "编辑草稿" in script.text
     assert "确认入账" in script.text
     assert "删除草稿" in script.text
@@ -49,6 +49,8 @@ def test_draft_review_actions_are_present_in_browser_ui(client):
     assert "/records/batch-confirm" in script.text
     assert "/void" in script.text
     assert "amount_min" in script.text
+    assert "导入复核工作台" in script.text
+    assert "/import-reviews" in script.text
     assert "occurred_from" in script.text
 
 

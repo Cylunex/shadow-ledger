@@ -124,6 +124,7 @@
 - 不自动把购买变成 Health 摄入；
 - Foliant 持仓/行情不复制到 Ledger；
 - 最近备份可恢复，恢复后不变量和 Asset 引用对账通过；
+- Platform capability lifecycle 可接收 Ledger observed evidence，隔离恢复演练可生成 restore-tested evidence；
 - 生产日志采样确认无自由文本、金额详情和凭据泄露。
 
 ## 8. v2 门槛

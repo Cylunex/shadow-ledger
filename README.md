@@ -18,6 +18,8 @@ Shadow Ledger 是以消费为中心的个人收支记录与规划系统。它同
 - Spending Intent、周期事项和分类目标；
 - CSV/JSON 导入导出，京东、淘宝、美团、饿了么 Markdown 账单导入；
 - Asset 附件、解析草稿与来源级幂等去重；
+- 导入复核工作台、可撤销商家规范化规则与数据完整度；
+- 通过稳定引用把消费凭证交给 Archive，不复制文件；
 - OIDC、审计、Outbox 和后台 Worker。
 
 ## Nexus 快捷操作
@@ -44,3 +46,4 @@ uv run ledger-web
 - [架构与安全](docs/architecture-security.md)
 - [跨项目集成](docs/integrations.md)
 - [Shadow Agent 插件接入](docs/agent-plugin.md)
+- [消费事实导入复核与运行证据](docs/import-review-and-evidence.md)

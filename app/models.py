@@ -21,6 +21,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -550,3 +551,110 @@ class IdentitySuggestion(Timestamps, Base):
     target_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     reason: Mapped[str] = mapped_column(Text)
     state: Mapped[str] = mapped_column(String(20), default="pending")
+
+
+class ImportBatch(Timestamps, Base):
+    """One user-visible import/review run, not an account reconciliation."""
+
+    __tablename__ = "import_batches"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_import_batch_idempotency"),
+        CheckConstraint("state IN ('open','completed')", name="ck_import_batch_state"),
+        Index("idx_import_batches_owner_created", "owner_id", "created_at"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    owner_id: Mapped[str] = mapped_column(Text)
+    idempotency_key: Mapped[str] = mapped_column(String(200))
+    request_hash: Mapped[bytes] = mapped_column(LargeBinary)
+    platform: Mapped[str] = mapped_column(String(40))
+    state: Mapped[str] = mapped_column(String(20), default="open")
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_count: Mapped[int] = mapped_column(Integer, default=0)
+    duplicate_count: Mapped[int] = mapped_column(Integer, default=0)
+    skipped_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ImportReviewItem(Timestamps, Base):
+    """Review metadata kept beside immutable imported source text."""
+
+    __tablename__ = "import_review_items"
+    __table_args__ = (
+        CheckConstraint(
+            "review_state IN ('pending','resolved','dismissed')",
+            name="ck_import_review_state",
+        ),
+        CheckConstraint("revision > 0", name="ck_import_review_revision"),
+        Index("idx_import_review_owner_state", "owner_id", "review_state", "created_at"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    owner_id: Mapped[str] = mapped_column(Text)
+    batch_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("import_batches.id"))
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("capture_sources.id"))
+    record_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("ledger_records.id"))
+    source_external_id: Mapped[str] = mapped_column(Text)
+    raw_merchant_name: Mapped[str | None] = mapped_column(Text)
+    raw_item_names: Mapped[list[str]] = mapped_column(JSON, default=list)
+    normalized_merchant_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("merchants.id"))
+    duplicate_of_record_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("ledger_records.id")
+    )
+    refund_candidate_entry_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("money_entries.id")
+    )
+    amount_anomaly_reason: Mapped[str | None] = mapped_column(String(120))
+    review_state: Mapped[str] = mapped_column(String(20), default="pending")
+    resolution: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class MerchantNormalizationRule(Timestamps, Base):
+    """Explainable exact-match rule learned only from a user's confirmation."""
+
+    __tablename__ = "merchant_normalization_rules"
+    __table_args__ = (
+        CheckConstraint("match_kind = 'raw_merchant_exact'", name="ck_merchant_rule_kind"),
+        CheckConstraint("revision > 0", name="ck_merchant_rule_revision"),
+        CheckConstraint("evidence_count > 0", name="ck_merchant_rule_evidence"),
+        Index("idx_merchant_rules_lookup", "owner_id", "normalized_value", "active"),
+        Index(
+            "uq_merchant_rules_active",
+            "owner_id",
+            "normalized_value",
+            unique=True,
+            postgresql_where=text("active"),
+            sqlite_where=text("active"),
+        ),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    owner_id: Mapped[str] = mapped_column(Text)
+    match_kind: Mapped[str] = mapped_column(String(40), default="raw_merchant_exact")
+    normalized_value: Mapped[str] = mapped_column(Text)
+    merchant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("merchants.id"))
+    explanation: Mapped[str] = mapped_column(Text)
+    evidence_count: Mapped[int] = mapped_column(Integer, default=1)
+    source_review_item_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("import_review_items.id"))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ArchiveEvidenceLink(Timestamps, Base):
+    """Stable linkage only; Ledger never copies Asset bytes into Archive."""
+
+    __tablename__ = "archive_evidence_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_id", "record_id", "asset_binding_id", "archive_uri",
+            name="uq_archive_evidence_link",
+        ),
+        CheckConstraint("revision > 0", name="ck_archive_evidence_revision"),
+        Index("idx_archive_evidence_record", "owner_id", "record_id", "active"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    owner_id: Mapped[str] = mapped_column(Text)
+    record_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("ledger_records.id"))
+    asset_binding_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("asset_bindings.id"))
+    archive_uri: Mapped[str] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

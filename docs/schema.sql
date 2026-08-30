@@ -423,6 +423,75 @@ CREATE TABLE user_preferences (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE import_batches (
+    id                  UUID PRIMARY KEY,
+    owner_id            TEXT NOT NULL,
+    idempotency_key     TEXT NOT NULL,
+    request_hash        BYTEA NOT NULL,
+    platform            TEXT NOT NULL,
+    state               TEXT NOT NULL CHECK (state IN ('open', 'completed')),
+    row_count           INTEGER NOT NULL,
+    created_count       INTEGER NOT NULL,
+    duplicate_count     INTEGER NOT NULL,
+    skipped_count       INTEGER NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (owner_id, idempotency_key)
+);
+
+CREATE TABLE import_review_items (
+    id                          UUID PRIMARY KEY,
+    owner_id                    TEXT NOT NULL,
+    batch_id                    UUID NOT NULL REFERENCES import_batches(id),
+    source_id                   UUID NOT NULL REFERENCES capture_sources(id),
+    record_id                   UUID NOT NULL REFERENCES ledger_records(id),
+    source_external_id          TEXT NOT NULL,
+    raw_merchant_name           TEXT,
+    raw_item_names              JSONB NOT NULL DEFAULT '[]'::jsonb,
+    normalized_merchant_id      UUID REFERENCES merchants(id),
+    duplicate_of_record_id      UUID REFERENCES ledger_records(id),
+    refund_candidate_entry_id   UUID REFERENCES money_entries(id),
+    amount_anomaly_reason       TEXT,
+    review_state                TEXT NOT NULL CHECK (review_state IN ('pending', 'resolved', 'dismissed')),
+    resolution                  JSONB NOT NULL DEFAULT '{}'::jsonb,
+    revision                    INTEGER NOT NULL CHECK (revision > 0),
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE merchant_normalization_rules (
+    id                      UUID PRIMARY KEY,
+    owner_id                TEXT NOT NULL,
+    match_kind              TEXT NOT NULL CHECK (match_kind = 'raw_merchant_exact'),
+    normalized_value        TEXT NOT NULL,
+    merchant_id             UUID NOT NULL REFERENCES merchants(id),
+    explanation             TEXT NOT NULL,
+    evidence_count          INTEGER NOT NULL CHECK (evidence_count > 0),
+    source_review_item_id   UUID NOT NULL REFERENCES import_review_items(id),
+    active                  BOOLEAN NOT NULL DEFAULT TRUE,
+    revision                INTEGER NOT NULL CHECK (revision > 0),
+    revoked_at              TIMESTAMPTZ,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX uq_merchant_rules_active
+    ON merchant_normalization_rules (owner_id, normalized_value) WHERE active;
+
+CREATE TABLE archive_evidence_links (
+    id                  UUID PRIMARY KEY,
+    owner_id            TEXT NOT NULL,
+    record_id           UUID NOT NULL REFERENCES ledger_records(id),
+    asset_binding_id    UUID NOT NULL REFERENCES asset_bindings(id),
+    archive_uri         TEXT NOT NULL,
+    active              BOOLEAN NOT NULL DEFAULT TRUE,
+    revision            INTEGER NOT NULL CHECK (revision > 0),
+    released_at         TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (owner_id, record_id, asset_binding_id, archive_uri)
+);
+
 -- Cross-table invariants which migrations must implement with deferred constraint
 -- triggers or transaction-level service validation:
 -- 1. consumption records have exactly one ConsumptionEvent;

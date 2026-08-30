@@ -231,6 +231,21 @@ occurred_from, occurred_to, amount_min, amount_max, query
 Ledger 不通过目标 URI 拼接内网 HTTP 请求。解析、权限和跳转由 Platform Catalog/SDK 负责；
 目标暂不可用不影响本地事实。
 
+### 导入复核、质量与 Archive 凭证
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/import-reviews` | 机器可读的重复、退款、金额异常、待确认商家工作队列 |
+| GET | `/import-batches/{id}` | 查看一次幂等导入批次及逐项状态 |
+| POST | `/import-reviews/{id}/resolve` | 带 revision 记录用户复核，可选学习商家规则 |
+| GET | `/merchant-normalization-rules` | 查看解释、证据数与活动状态 |
+| POST | `/merchant-normalization-rules/{id}/revoke` | 带 revision 撤销规则，不改写历史原文 |
+| GET | `/insights/data-quality` | 数据完整度与 Forecast 评估就绪度；不生成预测 |
+| POST/GET | `/records/{id}/archive-evidence` | 以 AssetBinding + `shadow://archive/` 稳定引用交接凭证 |
+| POST | `/records/{id}/archive-evidence/{link_id}/release` | 逻辑释放 Archive 关联 |
+
+导入复核不是账户对账。退款候选、金额异常和商家建议都不会自动改变已确认事实；导入仍只创建草稿。
+
 ## 11. 服务与未来 Agent 鉴权
 
 服务 Token 使用文件注入的哈希映射，并分配最小 scope：

@@ -336,3 +336,15 @@ v1 不建立依赖 Forecast 的用户流程；删除全部 Forecast 后必须可
 - 商家、分类和 ItemIdentity 被引用后只能停用或合并。
 - CaptureSource 的文件删除遵循 Asset 生命周期；Ledger 只能释放自己的引用。
 - 导出后删除个人数据属于单独运维流程，必须可审计且需要二次确认。
+
+## 15. 导入复核与规范化规则
+
+`ImportBatch` 表示一次幂等导入操作，`ImportReviewItem` 保存重复、退款候选、金额异常和待确认商家的
+复核状态。它们是消费事实质量元数据，不是账户或账单余额对账模型。
+
+`MerchantNormalizationRule` 只由用户在导入复核中确认后生成，v1 采用规范化原始商家文本的精确
+匹配。规则记录证据数、解释、revision 和撤销时间；应用规则只增加 `merchant_id`，不得改写
+`merchant_name_raw` 或商品 `raw_name`。
+
+`ArchiveEvidenceLink` 连接 Record、已有 AssetBinding 和 `shadow://archive/...` URI。表中不保存文件
+字节、下载地址或服务凭据；释放链接不删除 Asset。
