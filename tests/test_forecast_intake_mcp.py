@@ -11,9 +11,10 @@ from app import db as database
 from app.config import Settings
 from app.db import Base
 from app.mcp_server import build_mcp_server, mcp_create_draft, mcp_summary
-from app.models import CaptureSource, LedgerRecord
+from app.models import CaptureSource, ForecastRun, LedgerRecord
 from app.services.forecast import calculate
 from app.services.intake import process_intake_directory
+from app.worker import generate_daily_forecasts
 
 
 def create_item(client, headers, name: str = "滤芯") -> str:
@@ -277,6 +278,24 @@ def test_forecast_learns_use_duration_without_turning_it_into_a_fact():
         "sample_count": 2,
         "duration_seconds": 864000,
     }
+
+
+def test_worker_generates_one_daily_forecast_without_creating_facts(client, write_headers):
+    item_id = create_item(client, write_headers, "自动预测样本")
+    create_consumption(
+        client,
+        write_headers,
+        item_id,
+        "2026-07-01T08:00:00+00:00",
+        "auto-forecast-record",
+    )
+    assert database.SessionLocal is not None
+    with database.SessionLocal() as session:
+        fact_count = session.scalar(select(func.count()).select_from(LedgerRecord))
+        assert generate_daily_forecasts(session) == 1
+        assert generate_daily_forecasts(session) == 0
+        assert session.scalar(select(func.count()).select_from(ForecastRun)) == 1
+        assert session.scalar(select(func.count()).select_from(LedgerRecord)) == fact_count
 
 
 def structured_payload(*, confirm: bool = False, amount: str = "18.50") -> dict:

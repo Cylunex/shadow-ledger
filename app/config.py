@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     intake_owner_id_file: Path | None = None
     mcp_owner_id_file: Path | None = None
     mcp_allow_drafts: bool = False
+    auto_forecast_enabled: bool = True
+    auto_forecast_horizon_days: int = 90
 
     @field_validator("default_currency")
     @classmethod
@@ -106,6 +108,8 @@ class Settings(BaseSettings):
             raise ValueError("intake directory and owner id file must be configured together")
         if self.mcp_allow_drafts and self.mcp_owner_id_file is None:
             raise ValueError("MCP draft access requires an explicit owner id file")
+        if not 1 <= self.auto_forecast_horizon_days <= 365:
+            raise ValueError("auto forecast horizon must be between 1 and 365 days")
         if self.env == "production":
             if self.dev_auth:
                 raise ValueError("dev_auth is forbidden in production")

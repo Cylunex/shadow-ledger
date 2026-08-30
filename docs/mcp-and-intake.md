@@ -46,3 +46,10 @@ Worker 在同时配置 `LEDGER_INTAKE_DIRECTORY` 和 `LEDGER_INTAKE_OWNER_ID_FIL
 文件稳定两秒后才处理；成功文件移动到 `processed/`，无效或冲突文件移动到 `failed/`。目录和
 owner 文件必须由 Ledger 进程专用账号控制，不能放在 Web 可写目录。无论 Webhook 还是目录，最终
 都只创建 CaptureSource、来源关联和 Record 草稿，用户仍需在 Ledger 或 Nexus Review 中确认。
+
+## 自动预测
+
+Worker 默认按 `LEDGER_DEFAULT_TIMEZONE` 每个自然日为每个已有 owner 幂等生成一次 90 天预测，
+可用 `LEDGER_AUTO_FORECAST_HORIZON_DAYS` 在 1–365 天内调整，或通过
+`LEDGER_AUTO_FORECAST_ENABLED=false` 关闭。自动任务只写 `ForecastRun` 与 `ForecastItem` 建议，
+不会创建 Money/Consumption 事实，也不会确认任何草稿；用户仍可在页面手动重算和忽略建议。

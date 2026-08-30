@@ -10,6 +10,7 @@ import socket
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from dateutil.rrule import rrulestr
 from sqlalchemy import select
@@ -39,6 +40,7 @@ from app.models import (
     UseCycle,
 )
 from app.schemas import RecordCreate, jsonable
+from app.services.forecast import ALGORITHM_VERSION, generate_forecast
 from app.services.intake import process_intake_directory, read_owner_id
 from app.services.records import create_record, record_query, serialize_record
 
@@ -106,6 +108,43 @@ def create_due_reminders(db: Session) -> int:
         except (ValueError, TypeError):
             log.warning("invalid recurrence rule", extra={"aggregate_id": str(row.id)})
     db.commit()
+    return created
+
+
+def generate_daily_forecasts(db: Session) -> int:
+    """Create at most one deterministic suggestion run per owner and local day.
+
+    Forecasts are derived suggestions only. This path never creates LedgerRecord,
+    MoneyEntry or ConsumptionEvent facts and never confirms a draft.
+    """
+    settings = get_settings()
+    if not settings.auto_forecast_enabled:
+        return 0
+    today = datetime.now(ZoneInfo(settings.default_timezone)).date()
+    owners = set(db.scalars(select(LedgerRecord.owner_id).distinct()))
+    owners.update(db.scalars(select(RecurringCommitment.owner_id).distinct()))
+    owners.update(db.scalars(select(UseCycle.owner_id).distinct()))
+    created = 0
+    for owner_id in sorted(owners):
+        exists = db.scalar(
+            select(ForecastRun.id).where(
+                ForecastRun.owner_id == owner_id,
+                ForecastRun.as_of == today,
+                ForecastRun.timezone == settings.default_timezone,
+                ForecastRun.horizon_days == settings.auto_forecast_horizon_days,
+                ForecastRun.algorithm_version == ALGORITHM_VERSION,
+            )
+        )
+        if exists is not None:
+            continue
+        _, _, replayed = generate_forecast(
+            db,
+            owner_id,
+            today,
+            settings.default_timezone,
+            settings.auto_forecast_horizon_days,
+        )
+        created += int(not replayed)
     return created
 
 
@@ -330,6 +369,7 @@ def run_once(worker_id: str | None = None) -> int:
                 read_owner_id(settings.intake_owner_id_file),
             )
             completed += result["processed"] + result["failed"]
+        completed += generate_daily_forecasts(db)
         completed += create_due_reminders(db)
         completed += int(claim_and_run_job(db, worker_id))
         completed += int(deliver_outbox(db))
