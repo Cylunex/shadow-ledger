@@ -15,12 +15,133 @@ surfaces:
       metric_pointer: /net_spending
       detail_pointer: /month
       unit: CNY
+      metrics:
+        - id: expense
+          label: 支出
+          value_pointer: /expense
+          unit: CNY
+          tone: attention
+        - id: income
+          label: 收入
+          value_pointer: /income
+          unit: CNY
+          tone: good
+        - id: refund
+          label: 退款
+          value_pointer: /refund
+          unit: CNY
+          tone: neutral
+        - id: net-spending
+          label: 净支出
+          value_pointer: /net_spending
+          unit: CNY
+          tone: neutral
   - id: capture
     type: capture
     capability: ledger.records.draft
     operation_id: create_nexus_ledger_review
     risk_level: L2
     intent_prefixes: [ledger.record, ledger.expense, ledger.income, ledger.refund]
+  - id: quick-expense
+    type: quick-action
+    capability: ledger.records.draft
+    operation_id: create_nexus_ledger_review
+    risk_level: L2
+    action:
+      title: 记一笔支出
+      description: 输入金额和用途，直接写入 Ledger
+      intent: ledger.expense.quick
+      icon: expense
+      order: 10
+      submit_label: 保存支出
+      success_message: 支出已写入 Ledger，并保留回执
+      summary_template: "记录支出 CNY {amount} {title}"
+      fields:
+        - id: moneyType
+          label: 收支类型
+          type: hidden
+          required: true
+          default: expense
+        - id: amount
+          label: 金额
+          type: decimal
+          required: true
+          placeholder: "0.00"
+          unit: CNY
+          minimum: 0.01
+          maximum: 999999999
+          step: 0.01
+        - id: title
+          label: 用途
+          type: text
+          required: false
+          placeholder: 例如 午餐
+          max_length: 160
+        - id: currency
+          label: 币种
+          type: hidden
+          required: true
+          default: CNY
+        - id: occurredAt
+          label: 时间
+          type: hidden
+          required: true
+          default: $now
+        - id: timezone
+          label: 时区
+          type: hidden
+          required: true
+          default: Asia/Shanghai
+  - id: quick-income
+    type: quick-action
+    capability: ledger.records.draft
+    operation_id: create_nexus_ledger_review
+    risk_level: L2
+    action:
+      title: 记一笔收入
+      description: 快速保存收入金额与来源
+      intent: ledger.income.quick
+      icon: income
+      order: 20
+      submit_label: 保存收入
+      success_message: 收入已写入 Ledger，并保留回执
+      summary_template: "记录收入 CNY {amount} {title}"
+      fields:
+        - id: moneyType
+          label: 收支类型
+          type: hidden
+          required: true
+          default: income
+        - id: amount
+          label: 金额
+          type: decimal
+          required: true
+          placeholder: "0.00"
+          unit: CNY
+          minimum: 0.01
+          maximum: 999999999
+          step: 0.01
+        - id: title
+          label: 来源
+          type: text
+          required: false
+          placeholder: 例如 工资
+          max_length: 160
+        - id: currency
+          label: 币种
+          type: hidden
+          required: true
+          default: CNY
+        - id: occurredAt
+          label: 时间
+          type: hidden
+          required: true
+          default: $now
+        - id: timezone
+          label: 时区
+          type: hidden
+          required: true
+          default: Asia/Shanghai
   - id: review
     type: review
     capability: ledger.records.write
