@@ -39,6 +39,8 @@ deploy/                     脱敏部署模板
 - 周期事项只创建 Reminder 或 draft，从不自动确认；
 - 文件字节只进入 Asset；跨项目对象只保存 `shadow://` URI；
 - Agent 对模型仅开放最小披露读取和可撤销草案；Nexus 用户审核后的隐藏正式入账见 ADR 0004；
+  隐藏 Nexus Review 可按 ADR 0007 在同一草稿保留原始商家、场景、消费明细和证据引用，但模型
+  可见 draft 与 stdio MCP 仍为 money-only；
   UseCycle、Forecast、MCP 与自动抓单已按 ADR 0006 实现，且所有自动化仍只创建建议或草稿。
 
 改变这些内容前必须新增 ADR，并同步模型、迁移、API、页面和实施文档。

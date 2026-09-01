@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -20,12 +22,21 @@ from app.models import (
     AuditEvent,
     BudgetTarget,
     ConsumptionEvent,
+    ExternalReference,
     LedgerAgentGrant,
     LedgerRecord,
     MoneyCategory,
     MoneyEntry,
 )
-from app.schemas import Money, MoneyEntryInput, RecordCreate, StrictModel, jsonable
+from app.schemas import (
+    ConsumptionInput,
+    ConsumptionLineInput,
+    Money,
+    MoneyEntryInput,
+    RecordCreate,
+    StrictModel,
+    jsonable,
+)
 from app.services.records import confirm_record, create_record, get_record
 
 router = APIRouter(prefix="/api/machine/v1/agent", tags=["machine-agent"])
@@ -75,6 +86,16 @@ class NexusReviewCreate(StrictModel):
     fields: dict[str, object]
     source_text: str = Field(default="", max_length=4000)
     source_refs: list[str] = Field(default_factory=list, max_length=16)
+
+    @field_validator("source_refs")
+    @classmethod
+    def valid_source_refs(cls, value: list[str]) -> list[str]:
+        if any(
+            len(item) > 1024 or re.fullmatch(r"shadow://[a-z][a-z0-9-]{1,63}/.+", item) is None
+            for item in value
+        ):
+            raise ValueError("source_refs must contain valid shadow:// URIs")
+        return list(dict.fromkeys(value))
 
 
 def _bearer_error(status_code: int, code: str, message: str) -> AppError:
@@ -570,6 +591,102 @@ def agent_draft_reject(
     }
 
 
+def _review_text(fields: dict[str, object], key: str, *, maximum: int) -> str | None:
+    value = fields.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > maximum:
+        raise AppError(422, "invalid_nexus_review", f"{key} 字段无效")
+    return value or None
+
+
+def _review_consumption(fields: dict[str, object]) -> ConsumptionInput | None:
+    keys = {
+        "scene",
+        "merchantNameRaw",
+        "channelKey",
+        "channelNameRaw",
+        "placeRef",
+        "consumptionNote",
+        "consumptionItemsJson",
+    }
+    if not any(key in fields for key in keys):
+        return None
+    scene = fields.get("scene")
+    if not isinstance(scene, str) or not scene:
+        raise AppError(422, "invalid_nexus_review", "消费草稿缺少 scene")
+
+    raw_items = fields.get("consumptionItemsJson", [])
+    if isinstance(raw_items, str):
+        try:
+            raw_items = json.loads(raw_items)
+        except json.JSONDecodeError as exc:
+            raise AppError(
+                422, "invalid_nexus_review", "consumptionItemsJson 不是有效 JSON"
+            ) from exc
+    if not isinstance(raw_items, list) or len(raw_items) > 100:
+        raise AppError(422, "invalid_nexus_review", "消费明细必须是最多 100 项的数组")
+
+    lines: list[ConsumptionLineInput] = []
+    try:
+        for index, item in enumerate(raw_items):
+            if not isinstance(item, dict):
+                raise ValueError("line must be an object")
+            raw_name = item.get("rawName", item.get("raw_name"))
+            lines.append(
+                ConsumptionLineInput(
+                    raw_name=raw_name,
+                    quantity=item.get("quantity"),
+                    unit=item.get("unit"),
+                    amount=item.get("amount"),
+                    content_category=item.get("contentCategory", item.get("content_category")),
+                    note=item.get("note", ""),
+                    sort_order=item.get("sortOrder", item.get("sort_order", index)),
+                )
+            )
+        return ConsumptionInput(
+            scene=scene,
+            merchant_name_raw=_review_text(fields, "merchantNameRaw", maximum=1000),
+            channel_key=_review_text(fields, "channelKey", maximum=50),
+            channel_name_raw=_review_text(fields, "channelNameRaw", maximum=500),
+            place_ref=_review_text(fields, "placeRef", maximum=1024),
+            note=_review_text(fields, "consumptionNote", maximum=2000) or "",
+            lines=lines,
+        )
+    except (TypeError, ValueError) as exc:
+        raise AppError(422, "invalid_nexus_review", "消费草稿字段无效") from exc
+
+
+def _sync_nexus_source_refs(
+    db: Session, owner_id: str, record_id: uuid.UUID, source_refs: list[str]
+) -> None:
+    existing = set(
+        db.scalars(
+            select(ExternalReference.target_uri).where(
+                ExternalReference.owner_id == owner_id,
+                ExternalReference.source_type == "record",
+                ExternalReference.source_id == record_id,
+                ExternalReference.relation == "evidence",
+            )
+        )
+    )
+    requested = set(source_refs)
+    if existing and existing != requested:
+        raise AppError(409, "idempotency_mismatch", "同一草稿的来源引用不能改变")
+    if existing:
+        return
+    for target_uri in source_refs:
+        db.add(
+            ExternalReference(
+                owner_id=owner_id,
+                source_type="record",
+                source_id=record_id,
+                relation="evidence",
+                target_uri=target_uri,
+            )
+        )
+
+
 @router.post(
     "/nexus/reviews",
     status_code=status.HTTP_201_CREATED,
@@ -591,27 +708,40 @@ def create_nexus_ledger_review(
         occurred_at = datetime.now(UTC).isoformat()
     if money_type not in {"expense", "income", "refund"} or amount is None:
         raise AppError(422, "invalid_nexus_review", "账目草稿缺少金额或收支类型")
-    created = agent_draft_create(
-        AgentRecordDraftCreate(
+    identity = _require_agent(request, authorization, "ledger.records.draft")
+    grant = _grant(db, identity, "allow_drafts")
+    if idempotency_key is None or not 8 <= len(idempotency_key) <= 128:
+        raise AppError(400, "idempotency_key_required", "Idempotency-Key 长度必须为 8 到 128")
+    try:
+        candidate = RecordCreate(
             occurred_at=datetime.fromisoformat(occurred_at),
             timezone=str(fields.get("timezone") or "Asia/Shanghai"),
-            money_type=money_type,
-            amount=amount,
-            currency=str(currency),
-            category_key=(
-                str(fields["categoryKey"]) if fields.get("categoryKey") is not None else None
+            money_entry=MoneyEntryInput(
+                type=money_type,
+                amount=amount,
+                currency=str(currency),
+                category_key=(
+                    str(fields["categoryKey"]) if fields.get("categoryKey") is not None else None
+                ),
+                title=str(fields.get("title") or body.summary),
             ),
-            title=str(fields.get("title") or body.summary),
-        ),
-        request,
-        authorization,
-        idempotency_key,
+            consumption=_review_consumption(fields),
+            confirm=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise AppError(422, "invalid_nexus_review", "账目草稿字段无效") from exc
+    record = create_record(
         db,
+        grant.owner_id,
+        candidate,
+        f"agent:{identity.agent_id}:{idempotency_key}",
+        identity.agent_id,
+        actor_type="agent",
+        commit=False,
     )
-    record_id = uuid.UUID(str(created["record_ref"]).rsplit("/", 1)[-1])
-    record = db.get(LedgerRecord, record_id)
-    if record is None:
-        raise AppError(500, "nexus_review_missing", "账目草稿创建后不可见")
+    _sync_nexus_source_refs(db, grant.owner_id, record.id, body.source_refs)
+    db.commit()
+    record = get_record(db, grant.owner_id, record.id)
     return _ledger_review_envelope(record, db, request.state.request_id)
 
 
@@ -717,6 +847,43 @@ def _ledger_review_envelope(
         )
     if category is not None:
         fields["categoryKey"] = category.key
+    consumption = record.consumption
+    if consumption is not None:
+        fields.update(
+            {
+                "scene": consumption.scene,
+                "merchantNameRaw": consumption.merchant_name_raw,
+                "channelKey": consumption.channel_key,
+                "channelNameRaw": consumption.channel_name_raw,
+                "placeRef": consumption.place_ref,
+                "consumptionNote": consumption.note,
+                "consumptionItemsJson": [
+                    {
+                        "rawName": line.raw_name,
+                        "quantity": line.quantity,
+                        "unit": line.unit,
+                        "amount": line.amount,
+                        "contentCategory": line.content_category,
+                        "note": line.note,
+                        "sortOrder": line.sort_order,
+                    }
+                    for line in sorted(consumption.lines, key=lambda item: item.sort_order)
+                ],
+            }
+        )
+        fields = {key: value for key, value in fields.items() if value is not None}
+    source_refs = list(
+        db.scalars(
+            select(ExternalReference.target_uri)
+            .where(
+                ExternalReference.owner_id == record.owner_id,
+                ExternalReference.source_type == "record",
+                ExternalReference.source_id == record.id,
+                ExternalReference.relation == "evidence",
+            )
+            .order_by(ExternalReference.target_uri)
+        )
+    )
     state = "committed" if record.state == "confirmed" else "pending"
     summary = str(fields.get("title") or "Ledger 账目草稿")
     if "amount" in fields:
@@ -733,7 +900,7 @@ def _ledger_review_envelope(
         "risk_level": "L2",
         "state": state,
         "created_at": record.created_at.isoformat(),
-        "source_refs": [],
+        "source_refs": source_refs,
         "trace_id": trace_id,
         "receipt": receipt,
         "replayed": replayed,

@@ -45,6 +45,7 @@ Planning & Insights
 - 用户显式开始/结束的 UseCycle，不把购买解释为开始使用或库存；
 - 可解释、确定性、可回算的周期事项、复购间隔和使用周期预测；
 - 最小披露 stdio MCP 读取与可选 money-only 草稿；
+- Nexus 隐藏 Review 在同一待确认草稿中保留明确提供的消费语义与 `shadow://` 证据引用；
 - 结构化 Webhook 和受控导入目录抓单，幂等保存原文且只创建草稿；
 - JSON/CSV 导入导出，以及受支持平台的 Markdown 账单草稿导入；
 - Platform 原生 OIDC、服务鉴权和 Asset 引用；

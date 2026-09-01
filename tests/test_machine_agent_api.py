@@ -20,6 +20,8 @@ from app.main import create_app
 from app.models import (
     AuditEvent,
     BudgetTarget,
+    ConsumptionEvent,
+    ExternalReference,
     LedgerAgentGrant,
     LedgerRecord,
     MoneyCategory,
@@ -486,3 +488,111 @@ def test_standard_nexus_review_protocol_creates_lists_and_commits(agent_app_fact
         assert committed.status_code == 200, committed.text
         assert committed.json()["state"] == "committed"
         assert committed.json()["receipt"] == review["reference"]
+
+
+def test_nexus_review_preserves_rich_consumption_and_source_refs(agent_app_factory) -> None:
+    with agent_app_factory(("ledger.records.draft", "ledger.records.write")) as (
+        client,
+        _,
+    ):
+        assert database.SessionLocal is not None
+        with database.SessionLocal.begin() as session:
+            session.add(MoneyCategory(owner_id=OWNER_ID, key="food", name="餐饮"))
+
+        payload = {
+            "intent": "ledger.transaction",
+            "summary": "黄焖鸡外卖午餐",
+            "fields": {
+                "occurredAt": "2026-09-01T11:52:08+08:00",
+                "moneyType": "expense",
+                "amount": "34.9000",
+                "currency": "CNY",
+                "categoryKey": "food",
+                "title": "黄焖鸡外卖午餐",
+                "scene": "delivery",
+                "merchantNameRaw": "黄焖焖黄焖鸡米饭（百子湾店）",
+                "channelNameRaw": "外卖",
+                "consumptionNote": "实付金额来自订单截图。",
+                "consumptionItemsJson": json.dumps(
+                    [
+                        {"rawName": "黄焖鸡大份+鱼豆腐+米饭套餐", "sortOrder": 0},
+                        {"rawName": "金针菇", "quantity": "1", "unit": "份", "sortOrder": 1},
+                    ],
+                    ensure_ascii=False,
+                ),
+            },
+            "source_refs": [
+                "shadow://nexus/health/meals/2026-09-01/lunch/meal-photo",
+                "shadow://nexus/health/meals/2026-09-01/lunch/order-items",
+            ],
+        }
+        headers = {**_authorization(), "Idempotency-Key": "nexus-rich-ledger-review"}
+        created = client.post("/api/machine/v1/agent/nexus/reviews", headers=headers, json=payload)
+        assert created.status_code == 201, created.text
+        review = created.json()
+        assert review["fields"]["scene"] == "delivery"
+        assert review["fields"]["merchantNameRaw"].startswith("黄焖焖")
+        assert [item["rawName"] for item in review["fields"]["consumptionItemsJson"]] == [
+            "黄焖鸡大份+鱼豆腐+米饭套餐",
+            "金针菇",
+        ]
+        assert review["source_refs"] == sorted(payload["source_refs"])
+
+        record_id = uuid.UUID(review["review_id"])
+        with database.SessionLocal() as session:
+            record = session.get(LedgerRecord, record_id)
+            consumption = session.scalar(
+                select(ConsumptionEvent).where(ConsumptionEvent.record_id == record_id)
+            )
+            refs = set(
+                session.scalars(
+                    select(ExternalReference.target_uri).where(
+                        ExternalReference.source_id == record_id
+                    )
+                )
+            )
+            assert record is not None and record.record_kind == "consumption"
+            assert consumption is not None and consumption.scene == "delivery"
+            assert [line.raw_name for line in consumption.lines] == [
+                "黄焖鸡大份+鱼豆腐+米饭套餐",
+                "金针菇",
+            ]
+            assert refs == set(payload["source_refs"])
+
+        changed_refs = {
+            **payload,
+            "source_refs": ["shadow://nexus/health/meals/2026-09-01/lunch/other"],
+        }
+        mismatch = client.post(
+            "/api/machine/v1/agent/nexus/reviews",
+            headers=headers,
+            json=changed_refs,
+        )
+        assert mismatch.status_code == 409
+        assert mismatch.json()["error"]["code"] == "idempotency_mismatch"
+
+        committed = client.post(
+            f"/api/machine/v1/agent/nexus/reviews/{record_id}/commit",
+            headers=_authorization(),
+            json={"revision": review["revision"]},
+        )
+        assert committed.status_code == 200, committed.text
+        assert committed.json()["state"] == "committed"
+        assert committed.json()["fields"]["scene"] == "delivery"
+        assert committed.json()["source_refs"] == sorted(payload["source_refs"])
+
+
+def test_model_visible_agent_draft_remains_money_only(agent_app_factory) -> None:
+    with agent_app_factory(("ledger.records.draft",)) as (client, _):
+        response = client.post(
+            "/api/machine/v1/agent/drafts",
+            headers={**_authorization(), "Idempotency-Key": "money-only-boundary"},
+            json={
+                "occurred_at": "2026-09-01T11:52:08+08:00",
+                "money_type": "expense",
+                "amount": "34.9000",
+                "currency": "CNY",
+                "consumption": {"scene": "delivery"},
+            },
+        )
+        assert response.status_code == 422

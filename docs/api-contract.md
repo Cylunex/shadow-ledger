@@ -285,11 +285,17 @@ Shadow Agent 使用独立 `/api/machine/v1/agent` 合同，不复用浏览器 Se
 | GET | `/records` | `ledger.records.read` | 读取最小化确认账目，不返回备注、商家原文和支付信息 |
 | GET | `/budgets` | `ledger.budgets.read` | 读取月度预算目标与净支出进度 |
 | POST | `/drafts` | `ledger.records.draft` | 幂等创建可撤销 money-only 草案 |
+| POST | `/nexus/reviews` | `ledger.records.draft` | 隐藏 Host 入口；可创建金额与消费语义合一的草稿并保存证据引用 |
 
 每次请求依次校验独立 Bearer audience、scope 与 owner 级 grant。草案不接受账户、支付方式、
 汇率或 `confirm` 字段，金额使用 Decimal，币种和 IANA timezone 由确定性代码验证。正式确认仍
 只能由 Ledger 用户会话或未来受控确认合同完成；普通 `shadow-ledger` Profile 不注册正式入账、
 导出、难撤销调整或资金执行能力。
+
+模型可见 `/drafts` 保持 money-only。模型隐藏的 `/nexus/reviews` 额外接受 `scene`、
+`merchantNameRaw`、`channelKey`、`channelNameRaw`、`placeRef`、`consumptionNote` 与 JSON 字符串
+`consumptionItemsJson`；后者最多 100 项。`source_refs` 只接受有界 `shadow://` URI，并作为
+`relation=evidence` 的 ExternalReference 保存。commit 仍只接受 revision，不接受任何事实字段。
 
 stdio MCP 不复用浏览器 Session 或 Agent registry。它使用独立进程、最小数据库用户和受限 owner
 文件，默认只注册读取工具；显式开启后也只增加 money-only draft 工具，不提供确认、撤销或导出。

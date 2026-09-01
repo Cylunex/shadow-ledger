@@ -17,6 +17,10 @@ description: 读取用户已授权的账目与预算摘要；仅在当前 Profil
    调用它，并原样使用用户给出的金额事实。
 5. 在统一 Shadow Nexus Profile 中该工具不可用：不要尝试写入或声称已创建草稿；普通对话引导
    用户切换到“记一下”，Capture 分析则只按上层请求返回结构化 Proposal，等待 Nexus Review。
+   当用户明确提供且会影响日后检索、统计或追溯时，Proposal 除金额字段外可保留：
+   `scene`、`merchantNameRaw`、`channelKey`、`channelNameRaw`、`placeRef`、`consumptionNote`，以及
+   JSON 字符串 `consumptionItemsJson`。每个明细可含 `rawName`、`quantity`、`unit`、`amount`、
+   `contentCategory`、`note`、`sortOrder`；不得为了填满字段而推断缺失事实。
 6. 实际创建草稿后返回引用和 `draft` 状态，说明它尚未成为正式账目。
 
 ## 安全边界
