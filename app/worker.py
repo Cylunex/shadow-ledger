@@ -245,6 +245,7 @@ def process_job(db: Session, job: BackgroundJob) -> None:
                     "title",
                     "scene",
                     "merchant_name_raw",
+                    "payment_method",
                 ]
             )
             for row in records:
@@ -259,6 +260,7 @@ def process_job(db: Session, job: BackgroundJob) -> None:
                         row.money_entry.title if row.money_entry else "",
                         row.consumption.scene if row.consumption else "",
                         row.consumption.merchant_name_raw if row.consumption else "",
+                        row.money_entry.payment_method if row.money_entry else "",
                     ]
                 )
             content = output.getvalue().encode("utf-8-sig")

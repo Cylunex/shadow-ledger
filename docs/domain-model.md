@@ -56,6 +56,7 @@ currency CHAR(3)
 category_id UUID?
 title TEXT
 related_entry_id UUID?
+payment_method TEXT?  # ADR 0008 受控方式标签，未知为 null
 created_at TIMESTAMPTZ
 updated_at TIMESTAMPTZ
 ```
@@ -66,7 +67,7 @@ updated_at TIMESTAMPTZ
 - expense 对支出汇总为正向增加，income/refund 从净支出中扣除。
 - refund 的 `related_entry_id` 可指向原 expense；允许不知道原记录时为空。
 - related entry 必须属于同一 owner，且不能自引用。
-- 不包含账户、支付方式、余额或转账字段。
+- 支付方式仅保存受控标签；不包含账户、银行账号、余额或转账字段。
 - 修改已确认金额必须提供原因并写审计；首版可直接更新同一条记录，不做版本账本。
 
 汇总公式由查询层统一定义：

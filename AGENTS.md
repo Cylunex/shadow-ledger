@@ -4,7 +4,7 @@
 
 ## 不可破坏的产品边界
 
-- Ledger 是低负担的个人收支、消费记忆与规划系统，不追踪账户余额、支付方式或转账。
+- Ledger 是低负担的个人收支、消费记忆与规划系统，可记录轻量支付方式（ADR 0008），不追踪账户余额、银行账号或转账。
 - 不引入 Account、Posting、借贷方向、复式记账、对账或 PaymentAllocation。
 - `MoneyEntry.amount` 是最终金额事实；消费明细不要求与它对平。
 - MoneyEntry 与 ConsumptionEvent 是同一记录聚合的可选组成，状态只保存在聚合根。

@@ -14,9 +14,9 @@ Profile 生成一份通用 Bundle，DSH 使用 Ledger 专属凭据直连本服�
 | `ledger.records.draft` | L1 | 模型可见入口创建 money-only 草案；隐藏 Nexus Review 可保留富消费字段 |
 | `ledger.records.write` | L2 | 仅由 Nexus 在用户审核后提交同一条 Agent 草稿；对模型隐藏 |
 
-Ledger 产品不拥有 Account、余额、卡号、支付方式或转账，因此插件不虚构账户 API。不同币种
+Ledger 产品不拥有 Account、余额、卡号或转账，因此插件不虚构账户 API。不同币种
 分别查询，`exchange_rate_applied` 恒为 false。账目读取不返回标题、备注、商家/渠道原文、消费
-明细、Capture 原文、账号或支付凭据。草案输入也不接受账户、支付方式、汇率或确认标志。按
+明细、Capture 原文、账号或支付凭据。草案支持 ADR 0008 的可选支付方式标签，但不接受账户、汇率或确认标志。按
 ADR 0007，模型隐藏的 Nexus Review 创建入口可额外保留明确提供的消费场景、原始商家/渠道、
 消费明细与 `shadow://` 证据引用；普通 Agent draft 和 stdio MCP 仍保持 money-only。
 

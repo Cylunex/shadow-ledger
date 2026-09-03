@@ -66,7 +66,7 @@ def test_machine_openapi_keeps_final_write_out_of_model_draft_input() -> None:
     serialized = yaml.safe_dump(contract, sort_keys=True).lower()
     draft_properties = contract["components"]["schemas"]["AgentRecordDraftCreate"]["properties"]
 
-    assert {"account_id", "payment_method", "exchange_rate", "confirm"}.isdisjoint(
+    assert {"account_id", "payment_account", "exchange_rate", "confirm"}.isdisjoint(
         draft_properties
     )
     assert "/api/machine/v1/agent/drafts/{record_id}/commit" in contract["paths"]

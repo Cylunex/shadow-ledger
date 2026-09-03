@@ -96,6 +96,12 @@ class MoneyEntry(Timestamps, Base):
         CheckConstraint("type IN ('expense','income','refund')", name="ck_money_type"),
         CheckConstraint("amount > 0", name="ck_money_amount"),
         CheckConstraint(
+            "payment_method IS NULL OR payment_method IN "
+            "('alipay','wechat','jd_pay','jd_baitiao','huabei','gift_card','cash',"
+            "'bank_card','bank_transfer','mixed','other')",
+            name="ck_money_payment_method",
+        ),
+        CheckConstraint(
             "related_entry_id IS NULL OR related_entry_id <> id", name="ck_money_related"
         ),
         UniqueConstraint("id", "record_id"),
@@ -108,6 +114,7 @@ class MoneyEntry(Timestamps, Base):
     category_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("money_categories.id"))
     title: Mapped[str] = mapped_column(Text, default="")
     related_entry_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("money_entries.id"))
+    payment_method: Mapped[str | None] = mapped_column(String(24), nullable=True)
     record: Mapped[LedgerRecord] = relationship(back_populates="money_entry")
 
 

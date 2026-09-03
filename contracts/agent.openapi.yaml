@@ -29,6 +29,10 @@ paths:
           in: query
           required: false
           schema: { type: integer, minimum: 1, maximum: 50, default: 25 }
+        - name: payment_method
+          in: query
+          required: false
+          schema: { $ref: "#/components/schemas/PaymentMethod" }
       responses:
         "200":
           description: Bounded confirmed record facts
@@ -281,6 +285,10 @@ components:
         net_spending: { $ref: "#/components/schemas/MoneyValue" }
         generated_at: { type: string, format: date-time }
         exchange_rate_applied: { const: false }
+    PaymentMethod:
+      anyOf:
+        - enum: [alipay, wechat, jd_pay, jd_baitiao, huabei, gift_card, cash, bank_card, bank_transfer, mixed, other]
+        - type: "null"
     AgentRecordSummary:
       type: object
       additionalProperties: false
@@ -307,6 +315,7 @@ components:
         currency: { $ref: "#/components/schemas/OptionalString" }
         category_key: { $ref: "#/components/schemas/OptionalString" }
         scene: { $ref: "#/components/schemas/OptionalString" }
+        payment_method: { $ref: "#/components/schemas/PaymentMethod" }
     AgentRecordList:
       type: object
       additionalProperties: false
@@ -369,6 +378,7 @@ components:
             - { type: string, pattern: "^[a-z][a-z0-9_-]{0,49}$" }
             - { type: "null" }
         title: { type: string, maxLength: 160, default: "" }
+        payment_method: { $ref: "#/components/schemas/PaymentMethod" }
     AgentRecordDraftCreated:
       type: object
       additionalProperties: false

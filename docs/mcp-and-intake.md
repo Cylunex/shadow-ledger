@@ -9,11 +9,11 @@
 默认工具：
 
 - `ledger_monthly_summary`：单月、单币种已确认摘要；
-- `ledger_records`：最多 50 条最小披露确认记录；
+- `ledger_records`：最多 50 条最小披露确认记录，可返回/筛选支付方式标签；
 - `ledger_forecasts`：最近一次可解释预测。
 
 只有显式设置 `LEDGER_MCP_ALLOW_DRAFTS=true` 时才注册 `ledger_create_draft`。它只创建 money-only
-`draft`，要求调用方提供幂等键，不接受 confirm、账户、支付方式或汇率。MCP 永远不注册正式确认、
+`draft`，要求调用方提供幂等键，可选填受控 `payment_method` 标签，不接受 confirm、账户或汇率。MCP 永远不注册正式确认、
 撤销、导出或资金工具。
 
 ## Webhook intake

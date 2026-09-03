@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.payments import PaymentMethod
+
 Money = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=4)]
 Quantity = Annotated[Decimal, Field(gt=0, max_digits=12, decimal_places=4)]
 
@@ -23,6 +25,7 @@ class MoneyEntryInput(StrictModel):
     category_key: str | None = None
     title: str = Field(default="", max_length=500)
     related_entry_id: uuid.UUID | None = None
+    payment_method: PaymentMethod | None = None
 
     @field_validator("currency")
     @classmethod

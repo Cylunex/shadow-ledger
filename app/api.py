@@ -50,6 +50,7 @@ from app.models import (
     SpendingIntent,
     UseCycle,
 )
+from app.payments import PAYMENT_METHOD_LABELS, PaymentMethod
 from app.schemas import (
     AliasCreate,
     ArchiveEvidenceCreate,
@@ -186,6 +187,11 @@ def records_create(
     return serialize_record(db, record)
 
 
+@router.get("/payment-methods")
+def payment_methods(actor: Actor = Depends(require_scope("ledger.read"))):
+    return {"items": [{"key": key, "label": label} for key, label in PAYMENT_METHOD_LABELS.items()]}
+
+
 @router.get("/records")
 def records_list(
     state: str | None = None,
@@ -199,6 +205,7 @@ def records_list(
     amount_min: Decimal | None = Query(default=None, ge=0),
     amount_max: Decimal | None = Query(default=None, ge=0),
     query: str | None = Query(default=None, max_length=200),
+    payment_method: PaymentMethod | None = None,
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = None,
     actor: Actor = Depends(require_scope("ledger.read")),
@@ -220,6 +227,7 @@ def records_list(
         query,
         limit + 1,
         cursor,
+        payment_method=payment_method,
     )
     next_cursor = None
     if len(rows) > limit:

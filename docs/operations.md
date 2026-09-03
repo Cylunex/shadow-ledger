@@ -18,6 +18,12 @@
 `20260831_0005` 只新增 `use_cycles`、`forecast_runs` 和 `forecast_items`，不改写已有 Record、金额或
 CaptureSource。升级前仍需数据库备份。回滚会删除新表及其建议/周期数据，但不会删除既有账目。
 
+## 0006 迁移
+
+`20260903_0006` 只给 `money_entries` 增加 nullable `payment_method` 和方式白名单约束，历史值
+全部留空，不改金额。备份后在隔离 PostgreSQL 验证空库及 0005→0006；回滚应用时保留新列即可，
+不要在有新标签数据时执行降级删列。先升级数据库再重启 Web/Worker。
+
 ## 可选进程
 
 - `ledger-web`：浏览器与 API；

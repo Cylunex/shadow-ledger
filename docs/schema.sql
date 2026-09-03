@@ -67,6 +67,10 @@ CREATE TABLE money_entries (
     type                TEXT NOT NULL CHECK (type IN ('expense', 'income', 'refund')),
     amount              NUMERIC(18,4) NOT NULL CHECK (amount > 0),
     currency            CHAR(3) NOT NULL,
+    payment_method      VARCHAR(24) CHECK (payment_method IN (
+        'alipay','wechat','jd_pay','jd_baitiao','huabei','gift_card','cash',
+        'bank_card','bank_transfer','mixed','other'
+    )),
     category_id         UUID REFERENCES money_categories(id),
     title               TEXT NOT NULL DEFAULT '',
     related_entry_id    UUID REFERENCES money_entries(id),

@@ -26,6 +26,7 @@ from app.models import (
     MoneyEntry,
     OutboxEvent,
 )
+from app.payments import PAYMENT_METHOD_LABELS, PaymentMethod
 from app.schemas import ConsumptionInput, MoneyEntryInput, RecordCreate, RecordPatch, jsonable
 
 
@@ -60,6 +61,7 @@ def _money(db: Session, owner_id: str, record: LedgerRecord, data: MoneyEntryInp
         category_id=category.id if category else None,
         title=data.title,
         related_entry_id=data.related_entry_id,
+        payment_method=data.payment_method,
     )
     db.add(entry)
     db.flush()
@@ -124,7 +126,19 @@ def _consumption(
 
 
 def request_hash(data: Any) -> bytes:
-    encoded = json.dumps(jsonable(data), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    def compatible(value: Any) -> Any:
+        if isinstance(value, list):
+            return [compatible(item) for item in value]
+        if isinstance(value, dict):
+            result = {key: compatible(item) for key, item in value.items()}
+            entry = result.get("money_entry")
+            if isinstance(entry, dict) and entry.get("payment_method") is None:
+                # 0006 must not invalidate pre-upgrade idempotency keys.
+                entry.pop("payment_method", None)
+            return result
+        return value
+
+    encoded = json.dumps(compatible(jsonable(data)), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).digest()
 
 
@@ -244,11 +258,16 @@ def list_records(
     query: str | None = None,
     limit: int = 50,
     cursor: str | None = None,
+    payment_method: PaymentMethod | None = None,
 ) -> list[LedgerRecord]:
     statement = record_query().where(LedgerRecord.owner_id == owner_id)
     statement = statement.where(LedgerRecord.state == (state or "confirmed"))
     if money_type:
         statement = statement.where(LedgerRecord.money_entry.has(MoneyEntry.type == money_type))
+    if payment_method:
+        statement = statement.where(
+            LedgerRecord.money_entry.has(MoneyEntry.payment_method == payment_method)
+        )
     if scene:
         statement = statement.where(LedgerRecord.consumption.has(ConsumptionEvent.scene == scene))
     if category_key:
@@ -294,7 +313,14 @@ def list_records(
                 exists(
                     select(MoneyEntry.id).where(
                         MoneyEntry.record_id == LedgerRecord.id,
-                        MoneyEntry.title.ilike(pattern),
+                        or_(
+                            MoneyEntry.title.ilike(pattern),
+                            MoneyEntry.payment_method.ilike(pattern),
+                            MoneyEntry.payment_method.in_([
+                                key for key, label in PAYMENT_METHOD_LABELS.items()
+                                if query in label
+                            ]),
+                        ),
                     )
                 ),
                 exists(
@@ -515,6 +541,8 @@ def patch_record(
             entry.category_id = category.id if category else None
             entry.title = data.money_entry.title
             entry.related_entry_id = data.money_entry.related_entry_id
+            if "payment_method" in data.money_entry.model_fields_set:
+                entry.payment_method = data.money_entry.payment_method
         changes.append("money_entry")
     if data.consumption:
         if record.record_kind != "consumption":
@@ -635,6 +663,7 @@ def serialize_record(db: Session, record: LedgerRecord) -> dict[str, Any]:
                 "category_key": category_key,
                 "title": entry.title,
                 "related_entry_id": entry.related_entry_id,
+                "payment_method": entry.payment_method,
             },
             "consumption": None
             if event is None

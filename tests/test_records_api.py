@@ -31,7 +31,7 @@ def test_health_and_readiness(client):
 
 def test_draft_review_actions_are_present_in_browser_ui(client):
     page = client.get("/")
-    script = client.get("/static/app.js?v=20260831-forecast")
+    script = client.get("/static/app.js?v=20260903-payment")
 
     assert page.status_code == script.status_code == 200
     assert 'id="batch-confirm"' in page.text
@@ -39,8 +39,8 @@ def test_draft_review_actions_are_present_in_browser_ui(client):
     assert 'id="filter-query"' in page.text
     assert 'id="filter-state"' in page.text
     assert 'id="load-more"' in page.text
-    assert "app.css?v=20260831-forecast" in page.text
-    assert "app.js?v=20260831-forecast" in page.text
+    assert "app.css?v=20260903-payment" in page.text
+    assert "app.js?v=20260903-payment" in page.text
     assert "编辑草稿" in script.text
     assert "确认入账" in script.text
     assert "删除草稿" in script.text

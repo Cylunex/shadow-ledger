@@ -28,6 +28,7 @@ from app.models import (
     MoneyCategory,
     MoneyEntry,
 )
+from app.payments import PaymentMethod
 from app.schemas import (
     ConsumptionInput,
     ConsumptionLineInput,
@@ -50,6 +51,7 @@ class AgentRecordDraftCreate(StrictModel):
     currency: str = Field(min_length=3, max_length=3)
     category_key: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,49}$")
     title: str = Field(default="", max_length=160)
+    payment_method: PaymentMethod | None = None
 
     @field_validator("occurred_at")
     @classmethod
@@ -255,6 +257,7 @@ def agent_records(
     request: Request,
     month: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
     limit: int = Query(default=25, ge=1, le=50),
+    payment_method: PaymentMethod | None = None,
     authorization: Annotated[str | None, Header()] = None,
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
@@ -271,6 +274,7 @@ def agent_records(
             MoneyEntry.currency,
             MoneyCategory.key,
             ConsumptionEvent.scene,
+            MoneyEntry.payment_method,
         )
         .outerjoin(MoneyEntry, MoneyEntry.record_id == LedgerRecord.id)
         .outerjoin(MoneyCategory, MoneyCategory.id == MoneyEntry.category_id)
@@ -280,6 +284,7 @@ def agent_records(
             LedgerRecord.state == "confirmed",
             LedgerRecord.occurred_at >= start,
             LedgerRecord.occurred_at < end,
+            *([MoneyEntry.payment_method == payment_method] if payment_method else []),
         )
         .order_by(LedgerRecord.occurred_at.desc(), LedgerRecord.id)
         .limit(limit + 1)
@@ -299,6 +304,7 @@ def agent_records(
                     "currency": currency,
                     "category_key": category_key,
                     "scene": scene,
+                    "payment_method": method,
                 }
                 for (
                     record_id,
@@ -309,6 +315,7 @@ def agent_records(
                     currency,
                     category_key,
                     scene,
+                    method,
                 ) in rows
             ],
             "truncated": truncated,
@@ -432,6 +439,7 @@ def agent_draft_create(
             currency=body.currency,
             category_key=body.category_key,
             title=body.title,
+            payment_method=body.payment_method,
         ),
         confirm=False,
     )
@@ -724,6 +732,7 @@ def create_nexus_ledger_review(
                     str(fields["categoryKey"]) if fields.get("categoryKey") is not None else None
                 ),
                 title=str(fields.get("title") or body.summary),
+                payment_method=_review_text(fields, "paymentMethod", maximum=24),
             ),
             consumption=_review_consumption(fields),
             confirm=False,
@@ -843,6 +852,7 @@ def _ledger_review_envelope(
                 "amount": str(entry.amount),
                 "currency": entry.currency,
                 "title": entry.title,
+                "paymentMethod": entry.payment_method,
             }
         )
     if category is not None:

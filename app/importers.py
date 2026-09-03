@@ -9,10 +9,11 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.payments import parse_payment_method
 from app.schemas import ConsumptionInput, ConsumptionLineInput, MoneyEntryInput, RecordCreate
 
 TIMEZONE = ZoneInfo("Asia/Shanghai")
-PARSER_VERSION = "1"
+PARSER_VERSION = "2"
 
 JD_HEADERS = {
     "交易时间",
@@ -160,6 +161,7 @@ def _record(
     category: str,
     title: str,
     consumption: ConsumptionInput | None,
+    payment_raw: str | None = None,
 ) -> RecordCreate:
     return RecordCreate(
         occurred_at=occurred_at,
@@ -171,6 +173,7 @@ def _record(
             currency="CNY",
             category_key=category,
             title=_clip(title, 500),
+            payment_method=parse_payment_method(payment_raw),
         ),
         consumption=consumption,
         confirm=False,
@@ -252,13 +255,14 @@ def _parse_jd(headers: list[str], rows: list[dict[str, str]]) -> ParsedImport:
                     _jd_category(row.get("交易分类", "")),
                     row.get("交易说明", "") or row.get("商户名称", "") or "京东交易",
                     consumption,
+                    row.get("收/付款方式"),
                 ),
                 source_external_id=_fingerprint("jd", *identity),
                 raw_payload=_payload("jd", [row], warning_tuple),
                 warnings=warning_tuple,
             )
         )
-    warnings = ["支付方式仅保留在来源数据中，不进入账本领域模型"]
+    warnings = ["只提取明确的支付方式标签；未识别文本保留在来源中，不推断账户"]
     if excluded:
         warnings.append(f"{excluded} 条平台标记为不计收支，仍作为可核对的消费草稿导入")
     if refunds:
@@ -335,6 +339,7 @@ def _parse_taobao(headers: list[str], rows: list[dict[str, str]]) -> ParsedImpor
                     "services" if status == "充值成功" else "shopping",
                     title,
                     consumption,
+                    order.get("支付方式"),
                 ),
                 source_external_id=_fingerprint(
                     "taobao", order.get("订单号", "") or json.dumps(group, sort_keys=True)
@@ -386,6 +391,7 @@ def _parse_meituan(headers: list[str], rows: list[dict[str, str]]) -> ParsedImpo
                     "other",
                     title,
                     consumption,
+                    row.get("支付方式"),
                 ),
                 source_external_id=_fingerprint(
                     "meituan",
@@ -396,7 +402,7 @@ def _parse_meituan(headers: list[str], rows: list[dict[str, str]]) -> ParsedImpo
                 warnings=warnings,
             )
         )
-    warnings = ["支付方式仅保留在来源数据中；无法可靠判断业务场景，消费场景暂记为其他"]
+    warnings = ["支付方式仅提取明确标签；无法可靠判断业务场景，消费场景暂记为其他"]
     if refunds:
         warnings.append(f"{refunds} 条退款缺少可靠原单关联，保持为独立退款草稿")
     if skipped:
@@ -462,6 +468,7 @@ def _parse_eleme(headers: list[str], rows: list[dict[str, str]]) -> ParsedImport
                     "food",
                     title,
                     consumption,
+                    row.get("支付方式"),
                 ),
                 source_external_id=_fingerprint(
                     "eleme", row.get("订单号", "") or json.dumps(row, sort_keys=True)

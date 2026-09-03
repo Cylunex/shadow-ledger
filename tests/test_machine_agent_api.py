@@ -226,7 +226,8 @@ def test_machine_reads_are_minimal_currency_bounded_and_audited(agent_app_factor
         assert "private transaction title" not in serialized_records
         assert "must-not-reach-agent" not in serialized_records
         assert "account" not in serialized_records.lower()
-        assert "payment" not in serialized_records.lower()
+        assert records.json()["items"][0]["payment_method"] is None
+        assert "payment_account" not in serialized_records.lower()
         assert budgets.status_code == 200, budgets.text
         assert budgets.json()["items"][0]["remaining"] == "472.5000"
         assert budgets.json()["exchange_rate_applied"] is False
@@ -508,6 +509,7 @@ def test_nexus_review_preserves_rich_consumption_and_source_refs(agent_app_facto
                 "amount": "34.9000",
                 "currency": "CNY",
                 "categoryKey": "food",
+                "paymentMethod": "alipay",
                 "title": "黄焖鸡外卖午餐",
                 "scene": "delivery",
                 "merchantNameRaw": "黄焖焖黄焖鸡米饭（百子湾店）",
@@ -531,6 +533,7 @@ def test_nexus_review_preserves_rich_consumption_and_source_refs(agent_app_facto
         assert created.status_code == 201, created.text
         review = created.json()
         assert review["fields"]["scene"] == "delivery"
+        assert review["fields"]["paymentMethod"] == "alipay"
         assert review["fields"]["merchantNameRaw"].startswith("黄焖焖")
         assert [item["rawName"] for item in review["fields"]["consumptionItemsJson"]] == [
             "黄焖鸡大份+鱼豆腐+米饭套餐",
@@ -579,6 +582,7 @@ def test_nexus_review_preserves_rich_consumption_and_source_refs(agent_app_facto
         assert committed.status_code == 200, committed.text
         assert committed.json()["state"] == "committed"
         assert committed.json()["fields"]["scene"] == "delivery"
+        assert committed.json()["fields"]["paymentMethod"] == "alipay"
         assert committed.json()["source_refs"] == sorted(payload["source_refs"])
 
 

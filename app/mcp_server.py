@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app import db as database
 from app.config import Settings, get_settings
 from app.models import ForecastItem, ForecastRun, LedgerRecord, MoneyEntry
+from app.payments import PAYMENT_METHOD_LABELS, PaymentMethod
 from app.schemas import MoneyEntryInput, RecordCreate, jsonable
 from app.services.intake import read_owner_id
 from app.services.records import create_record, list_records
@@ -65,9 +66,13 @@ def mcp_summary(owner_id: str, month: str | None, currency: str) -> dict[str, An
     }
 
 
-def mcp_records(owner_id: str, month: str | None, limit: int) -> dict[str, Any]:
+def mcp_records(
+    owner_id: str, month: str | None, limit: int, payment_method: PaymentMethod | None = None,
+) -> dict[str, Any]:
     if not 1 <= limit <= 50:
         raise ValueError("limit must be between 1 and 50")
+    if payment_method is not None and payment_method not in PAYMENT_METHOD_LABELS:
+        raise ValueError("invalid payment method")
     start, end, normalized_month = _month_range(month)
     assert database.SessionLocal is not None
     with database.SessionLocal() as session:
@@ -78,6 +83,7 @@ def mcp_records(owner_id: str, month: str | None, limit: int) -> dict[str, Any]:
             occurred_from=start,
             occurred_to=end,
             limit=limit,
+            payment_method=payment_method,
         )
         items = [
             jsonable(
@@ -88,6 +94,7 @@ def mcp_records(owner_id: str, month: str | None, limit: int) -> dict[str, Any]:
                     "amount": row.money_entry.amount if row.money_entry else None,
                     "currency": row.money_entry.currency if row.money_entry else None,
                     "title": row.money_entry.title if row.money_entry else None,
+                    "payment_method": row.money_entry.payment_method if row.money_entry else None,
                     "scene": row.consumption.scene if row.consumption else None,
                 }
             )
@@ -150,6 +157,7 @@ def mcp_create_draft(
     title: str = "",
     occurred_at: str | None = None,
     timezone: str = "Asia/Shanghai",
+    payment_method: PaymentMethod | None = None,
 ) -> dict[str, Any]:
     if not idempotency_key or len(idempotency_key) > 196:
         raise ValueError("idempotency_key is required and must be at most 196 characters")
@@ -172,6 +180,7 @@ def mcp_create_draft(
             amount=parsed_amount,
             currency=_currency(currency),
             title=title,
+            payment_method=payment_method,
         ),
         confirm=False,
     )
@@ -213,10 +222,12 @@ def build_mcp_server(settings: Settings | None = None) -> MCPServer:
         return mcp_summary(owner_id, month, currency)
 
     @server.tool(title="已确认记录", structured_output=True)
-    def ledger_records(month: str | None = None, limit: int = 20) -> dict[str, Any]:
+    def ledger_records(
+        month: str | None = None, limit: int = 20, payment_method: PaymentMethod | None = None,
+    ) -> dict[str, Any]:
         """读取最小披露的已确认记录；不返回备注、原始抓单正文或凭据。"""
 
-        return mcp_records(owner_id, month, limit)
+        return mcp_records(owner_id, month, limit, payment_method)
 
     @server.tool(title="消费预测建议", structured_output=True)
     def ledger_forecasts(limit: int = 20) -> dict[str, Any]:
@@ -235,6 +246,7 @@ def build_mcp_server(settings: Settings | None = None) -> MCPServer:
             title: str = "",
             occurred_at: str | None = None,
             timezone: str = "Asia/Shanghai",
+            payment_method: PaymentMethod | None = None,
         ) -> dict[str, Any]:
             """创建 money-only 草稿。该工具永远不会确认正式事实。"""
 
@@ -247,6 +259,7 @@ def build_mcp_server(settings: Settings | None = None) -> MCPServer:
                 title=title,
                 occurred_at=occurred_at,
                 timezone=timezone,
+                payment_method=payment_method,
             )
 
     return server

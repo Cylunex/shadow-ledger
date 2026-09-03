@@ -120,6 +120,23 @@ surfaces:
           required: false
           placeholder: 例如 午餐
           max_length: 160
+        - id: paymentMethod
+          label: 支付方式
+          type: select
+          required: false
+          options:
+            - {value: "", label: 未提供}
+            - {value: alipay, label: 支付宝}
+            - {value: wechat, label: 微信支付}
+            - {value: jd_pay, label: 京东支付}
+            - {value: jd_baitiao, label: 京东白条}
+            - {value: huabei, label: 花呗}
+            - {value: gift_card, label: 礼品卡}
+            - {value: cash, label: 现金}
+            - {value: bank_card, label: 银行卡}
+            - {value: bank_transfer, label: 银行转账}
+            - {value: mixed, label: 混合支付}
+            - {value: other, label: 其他}
         - id: currency
           label: 币种
           type: hidden
@@ -170,6 +187,23 @@ surfaces:
           required: false
           placeholder: 例如 工资
           max_length: 160
+        - id: paymentMethod
+          label: 支付方式
+          type: select
+          required: false
+          options:
+            - {value: "", label: 未提供}
+            - {value: alipay, label: 支付宝}
+            - {value: wechat, label: 微信支付}
+            - {value: jd_pay, label: 京东支付}
+            - {value: jd_baitiao, label: 京东白条}
+            - {value: huabei, label: 花呗}
+            - {value: gift_card, label: 礼品卡}
+            - {value: cash, label: 现金}
+            - {value: bank_card, label: 银行卡}
+            - {value: bank_transfer, label: 银行转账}
+            - {value: mixed, label: 混合支付}
+            - {value: other, label: 其他}
         - id: currency
           label: 币种
           type: hidden

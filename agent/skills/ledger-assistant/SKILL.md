@@ -15,10 +15,10 @@ description: 读取用户已授权的账目与预算摘要；仅在当前 Profil
 3. 不跨币种相加；`exchange_rate_applied=false` 表示没有做任何汇率换算。
 4. 只有独立 Ledger Profile 的当前工具目录明确包含 `ledger.records.draft` 时，用户要求保存后才可
    调用它，并原样使用用户给出的金额事实。
-5. 在统一 Shadow Nexus Profile 中该工具不可用：不要尝试写入或声称已创建草稿；普通对话引导
-   用户切换到“记一下”，Capture 分析则只按上层请求返回结构化 Proposal，等待 Nexus Review。
+5. 在统一 Shadow Nexus Profile 中该工具不可用：不要尝试写入或声称已创建草稿；对话/Capture 分析按上层请求返回结构化 Proposal，由 Nexus Host 按用户授权策略执行 Review；
+   无需强制用户切换网页，收到领域回执后才能声称保存成功。
    当用户明确提供且会影响日后检索、统计或追溯时，Proposal 除金额字段外可保留：
-   `scene`、`merchantNameRaw`、`channelKey`、`channelNameRaw`、`placeRef`、`consumptionNote`，以及
+   `paymentMethod`、`scene`、`merchantNameRaw`、`channelKey`、`channelNameRaw`、`placeRef`、`consumptionNote`，以及
    JSON 字符串 `consumptionItemsJson`。每个明细可含 `rawName`、`quantity`、`unit`、`amount`、
    `contentCategory`、`note`、`sortOrder`；不得为了填满字段而推断缺失事实。
 6. 实际创建草稿后返回引用和 `draft` 状态，说明它尚未成为正式账目。
