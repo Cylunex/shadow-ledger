@@ -566,6 +566,7 @@ def patch_record(
     actor_id: str,
     *,
     commit: bool = True,
+    actor_type: str = "user",
 ):
     record = db.scalar(
         record_query()
@@ -631,7 +632,7 @@ def patch_record(
     db.add(
         AuditEvent(
             owner_id=owner_id,
-            actor_type="user",
+            actor_type=actor_type,
             actor_id=actor_id,
             action="record.corrected" if record.state == "confirmed" else "record.updated",
             aggregate_type="record",
@@ -680,7 +681,7 @@ def add_money_entry(
     return get_record(db, owner_id, record.id)
 
 
-def delete_draft(db: Session, owner_id: str, record_id: uuid.UUID, revision: int) -> None:
+def delete_draft(db: Session, owner_id: str, record_id: uuid.UUID, revision: int, *, commit: bool = True) -> None:
     from app.models import (
         ArchiveEvidenceLink,
         ImportBatch,
@@ -786,7 +787,10 @@ def delete_draft(db: Session, owner_id: str, record_id: uuid.UUID, revision: int
     record.consumption = None
     db.flush()
     db.delete(record)
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
 
 
 def serialize_record(db: Session, record: LedgerRecord) -> dict[str, Any]:

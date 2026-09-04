@@ -1,6 +1,6 @@
 version: 2
 app_id: ledger
-package_version: 1.1.0
+package_version: 1.3.0
 skills:
   - id: ledger-assistant
     path: skills/ledger-assistant/SKILL.md
@@ -10,10 +10,24 @@ skills:
       - ledger.records.read
       - ledger.budgets.read
       - ledger.records.draft
-      - ledger.records.write
     invocation:
       model: true
       user: true
+  - id: ledger-research
+    path: skills/ledger-research/SKILL.md
+    summary: 用确定性数字和查询凭证研究收支
+    capabilities: [ledger.summary.read, ledger.records.read, ledger.budgets.read]
+    invocation: {model: true, user: true}
+  - id: ledger-capture
+    path: skills/ledger-capture/SKILL.md
+    summary: 解析并保存等待人工确认的金额草稿
+    capabilities: [ledger.records.draft]
+    invocation: {model: true, user: true}
+  - id: ledger-steward
+    path: skills/ledger-steward/SKILL.md
+    summary: 整理待处理与建议而不执行事实修改
+    capabilities: [ledger.records.read]
+    invocation: {model: true, user: true}
 capabilities:
   - id: ledger.summary.read
     summary: 读取已授权 Ledger 工作区中指定月份和币种的金额摘要

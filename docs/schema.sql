@@ -591,3 +591,6 @@ CREATE TABLE suggestion_feedback (
     UNIQUE (owner_id, episode_key),
     CHECK (state <> 'snoozed' OR snoozed_until IS NOT NULL)
 );
+
+-- ADR 0010 / 0008 additive Agent tables are documented in agent-schema.sql.
+-- Apply all changes through Alembic, not by running documentation snapshots.

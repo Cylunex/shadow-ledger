@@ -538,6 +538,90 @@ class LedgerAgentGrant(Timestamps, Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class AgentIntent(Timestamps, Base):
+    __tablename__ = "agent_intents"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "agent_id", "request_key", name="uq_agent_intent_request"),
+        CheckConstraint("action IN ('confirm','reject')", name="ck_agent_intent_action"),
+        CheckConstraint("state IN ('awaiting_human','approved','rejected','executed')", name="ck_agent_intent_state"),
+        Index("idx_agent_intent_queue", "owner_id", "state", "created_at"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    owner_id: Mapped[str] = mapped_column(Text)
+    agent_id: Mapped[str] = mapped_column(String(64))
+    request_key: Mapped[str] = mapped_column(String(64))
+    record_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    revision: Mapped[int] = mapped_column(Integer)
+    action: Mapped[str] = mapped_column(String(16))
+    snapshot: Mapped[dict] = mapped_column(JSON)
+    args_hash: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(24), default="awaiting_human")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AgentPolicyDecision(Base):
+    __tablename__ = "agent_policy_decisions"
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    intent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agent_intents.id"))
+    verdict: Mapped[str] = mapped_column(String(12))
+    reason_codes: Mapped[list] = mapped_column(JSON)
+    policy_digest: Mapped[str] = mapped_column(String(64))
+    state_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class AgentApprovalGrant(Base):
+    __tablename__ = "agent_approval_grants"
+    __table_args__ = (UniqueConstraint("intent_id", name="uq_agent_approval_intent"),)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    intent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agent_intents.id"))
+    decision_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agent_policy_decisions.id"))
+    owner_id: Mapped[str] = mapped_column(Text)
+    approved_by: Mapped[str] = mapped_column(Text)
+    args_hash: Mapped[str] = mapped_column(String(64))
+    policy_digest: Mapped[str] = mapped_column(String(64))
+    capability_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class AgentExecutionReceipt(Base):
+    __tablename__ = "agent_execution_receipts"
+    __table_args__ = (UniqueConstraint("grant_id", name="uq_agent_receipt_grant"),)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    owner_id: Mapped[str] = mapped_column(Text)
+    agent_id: Mapped[str] = mapped_column(String(64))
+    intent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agent_intents.id"))
+    grant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agent_approval_grants.id"))
+    payload: Mapped[dict] = mapped_column(JSON)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class AgentQueryRun(Base):
+    __tablename__ = "agent_query_runs"
+    __table_args__ = (Index("idx_agent_query_owner", "owner_id", "created_at"),)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    owner_id: Mapped[str] = mapped_column(Text)
+    agent_id: Mapped[str] = mapped_column(String(64))
+    catalog_hash: Mapped[str] = mapped_column(String(64))
+    query_fingerprint: Mapped[str] = mapped_column(String(64))
+    result: Mapped[dict] = mapped_column(JSON)
+    result_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class AgentCatalogSnapshot(Base):
+    __tablename__ = "agent_catalog_snapshots"
+    catalog_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(Text)
+    agent_id: Mapped[str] = mapped_column(String(64))
+    snapshot: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class UserPreference(Base):
     __tablename__ = "user_preferences"
     owner_id: Mapped[str] = mapped_column(Text, primary_key=True)

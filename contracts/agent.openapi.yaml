@@ -421,13 +421,14 @@ components:
     AgentRecordDraftCommit:
       type: object
       additionalProperties: false
-      required: [revision]
+      required: [revision, approval_grant_id]
       properties:
         revision: { type: integer, minimum: 1 }
+        approval_grant_id: { type: string, format: uuid, description: Ledger 用户会话批准精确内容后签发的一次性 Grant，不可由 Agent 自行签发 }
     AgentRecordCommitted:
       type: object
       additionalProperties: false
-      required: [record_ref, state, revision, replayed, final_entry_created]
+      required: [record_ref, state, revision, replayed, final_entry_created, receipt]
       properties:
         record_ref:
           type: string
@@ -436,11 +437,13 @@ components:
         revision: { type: integer, minimum: 2 }
         replayed: { type: boolean }
         final_entry_created: { const: true }
+        receipt: { type: string, pattern: "^shadow://ledger/receipts/" }
     AgentRecordRejected:
       type: object
       additionalProperties: false
-      required: [record_ref, state, replayed]
+      required: [record_ref, state, replayed, receipt]
       properties:
         record_ref: { type: string, pattern: "^shadow://ledger/records/" }
         state: { const: rejected }
         replayed: { type: boolean }
+        receipt: { type: string, pattern: "^shadow://ledger/receipts/" }

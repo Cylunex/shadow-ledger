@@ -332,3 +332,11 @@ imports 的 source 支持已检测的 Markdown／CSV；未知表头、歧义金�
 统一规则：来源版本冲突、记录／复核／反馈陈旧返回 409；确认前的金额异常或来源变化返回
 review_required；普通商家未规范化、退款暂不关联可保留未知。批量确认任一失败时整批事务不提交。
 具体格式、上限和权限见 [优化实现](optimization-implementation.md)。
+
+## 1.3 Agent 控制面
+
+新增 `/api/machine/v1/agent/catalog`、`/tools/call`、`/review-requests` 与状态查询；对应用户审核、
+执行与凭证在 `/api/v1/agent`，详见 [完整合同与权限](agent-optimization-2026-09.md)。
+旧 Agent/Nexus commit/reject 请求体必须有 revision + approval_grant_id，否则 428 approval_required。
+批准绑定内容/版本，参数不匹配、过期、权限或策略变化返回 409；无 grant/跨 owner 返回 404。
+普通模型目录永远没有这些 L2 动作。`allow_confirm` 不能单独代替逐动作审批。

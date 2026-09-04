@@ -1,0 +1,24 @@
+version: 1
+gateway: /api/machine/v1/agent
+catalog: /catalog
+call: /tools/call
+schema_source: app/agent_schemas.py
+policy: ledger-agent-policy-v1
+catalog_binding: [owner_hash, agent_id, scopes, authorization_hash, skill_hash, tools, policy_digest, disclosure_profile]
+profiles:
+  remote_minimal: [amount, currency, type, controlled_labels, canonical_identity, uri]
+  local_private: [amount, currency, type, controlled_labels, canonical_identity, uri, title]
+skills:
+  research: [ledger_overview, ledger_search, ledger_entity_insights, ledger_attention, ledger_explain]
+  capture: [ledger_parse_capture, ledger_create_draft, ledger_revise_draft, ledger_attach_source]
+  steward: [ledger_attention, ledger_explain]
+hidden_effects:
+  model_visible: false
+  request: /review-requests
+  approval: /api/v1/agent/reviews/{id}/decision
+  executor: /api/v1/agent/execute
+  receipt: /api/v1/agent/receipts/{id}
+  legacy_without_grant_status: 428
+  grant_ttl_seconds: 600
+  atomic: [grant_consumption, record_transition, receipt, audit, confirmation_outbox]
+excluded: [sql, confirm_tool, void_tool, export_tool, account, balance, payment_execution]

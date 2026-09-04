@@ -31,7 +31,8 @@ class AgentAccess:
         except AgentAuthError as exc:
             raise MachineAuthError("invalid Ledger Agent credential") from exc
         try:
-            identity.require_scope(scope)
+            if scope:
+                identity.require_scope(scope)
         except AgentAuthError as exc:
             raise MachineScopeError("Ledger Agent scope is not granted") from exc
         return identity

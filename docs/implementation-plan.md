@@ -210,3 +210,9 @@
 实际功能、迁移与验收限制以 [optimization-implementation.md](optimization-implementation.md)
 为准。支付宝／微信仅声明已知文本表头和合成样本测试，真实导出验收仍需样本；
 NAS 真实代理、恢复和资源测试需要部署阶段执行，不将本地测试结果冒充生产验收。
+
+## Agent 增量交付（1.3）
+
+研究 → ADR 0010 → 六张持久控制表 → Gateway/数字证据 → 精确批准/执行 Receipt → 三种 Skill →
+官方 SDK 可选远程 MCP → 工作台/问账 → 迁移与权限/并发回归。细节、验收和排除范围见
+[Agent 方案](agent-optimization-2026-09.md)。不依赖新的账务内核；Nexus 与 Identity 的生产适配是发布门槛。

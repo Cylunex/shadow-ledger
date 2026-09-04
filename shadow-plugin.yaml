@@ -2,7 +2,7 @@ apiVersion: shadow.cylunex/v1alpha1
 kind: ShadowDomainPlugin
 metadata:
   id: shadow-ledger
-  version: 1.1.0
+  version: 1.3.0
   display_name: Shadow Ledger
   description: 以最小披露方式提供账目、预算和可解释消费规划，以及经用户审核的两阶段记账
 spec:

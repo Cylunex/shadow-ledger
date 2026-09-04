@@ -1,4 +1,4 @@
-"""Exercises the real 0006→0007 migration, including historic feedback backfill."""
+"""Exercises 0006→head, preserving feedback without inventing Agent approvals."""
 
 from datetime import UTC, date, datetime
 from uuid import uuid4
@@ -69,6 +69,9 @@ def test_postgres_upgrade_preserves_old_dismissal(client, settings, monkeypatch)
             assert row.state == "dismissed"
             assert db.scalar(select(ForecastItem)).state == "dismissed"
         assert "source_observations" in inspect(temporary).get_table_names()
+        assert "agent_execution_receipts" in inspect(temporary).get_table_names()
+        with temporary.connect() as conn:
+            assert conn.execute(text("SELECT count(*) FROM agent_approval_grants")).scalar() == 0
         command.upgrade(config, "head")
     finally:
         temporary.dispose()

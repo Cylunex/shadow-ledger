@@ -25,6 +25,7 @@ Shadow Ledger 是以消费为中心的个人收支记录与规划系统。它同
 - 通过稳定引用把消费凭证交给 Archive，不复制文件；
 - OIDC、审计、Outbox 和后台 Worker。
 - 只读优先的 stdio MCP，以及只创建草稿的结构化 Webhook/受控目录抓单。
+- Agent v2 任务目录、确定性数字凭证、对话草稿和一次性精确审批／执行 Receipt；远程 MCP 默认关闭。
 
 ## Nexus 快捷操作
 
@@ -46,6 +47,8 @@ MCP 与自动抓单的配置和安全边界见
 实际数据库、OIDC、Session 和 Asset 凭据仅通过被忽略的本地配置或秘密文件提供。
 
 ## 文档
+
+- [Agent 1.3 优化方案、研究来源与兼容门槛](docs/agent-optimization-2026-09.md)
 
 - [产品边界](docs/product-boundary.md)
 - [领域模型](docs/domain-model.md)

@@ -40,6 +40,26 @@ def race(actions):
         return list(pool.map(run, actions))
 
 
+def test_postgres_agent_grant_consumed_once(postgres):
+    from app.models import AgentExecutionReceipt, LedgerAgentGrant
+    from app.services.agent_effects import approve, execute, request_review
+    body = RecordCreate.model_validate({"occurred_at": "2026-09-04T10:00:00+08:00",
+        "money_entry": {"type": "expense", "amount": "32.00", "currency": "CNY"}})
+    with database.SessionLocal() as db:
+        db.add(LedgerAgentGrant(agent_id="agent-test", owner_id="alice", granted_by="alice", allow_confirm=True))
+        db.commit()
+        row = create_record(db, "alice", body, "agent-concurrency-draft", "agent-test", actor_type="agent")
+        intent = request_review(db, "alice", "agent-test", row.id, 1, "confirm", "agent-concurrency-review")
+        grant_id = UUID(approve(db, "alice", intent.id, intent.args_hash, True)["approval_grant_id"])
+    def commit(db):
+        return execute(db, "alice", "agent-test", grant_id)["receipt"]
+    results = race([commit, commit])
+    assert results[0] == results[1]
+    with database.SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(AgentExecutionReceipt)) == 1
+        assert db.scalar(select(func.count()).select_from(OutboxEvent).where(OutboxEvent.event_type == "ledger.record.confirmed")) == 1
+
+
 def test_postgres_create_same_key_has_one_fact(postgres):
     body = RecordCreate.model_validate(
         {

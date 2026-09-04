@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ledger persistent execution receipt payload",
+  "type": "object",
+  "required": ["schema_version", "intent_id", "grant_id", "action", "args_hash", "record_ref", "before_revision", "revision", "actor_id", "agent_id", "executor_id", "policy_digest", "outcome", "executed_at"],
+  "properties": {
+    "schema_version": {"const": "ledger-receipt-v1"},
+    "intent_id": {"type": "string", "format": "uuid"},
+    "grant_id": {"type": "string", "format": "uuid"},
+    "action": {"enum": ["confirm", "reject"]},
+    "args_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "record_ref": {"type": "string", "pattern": "^shadow://ledger/records/"},
+    "before_revision": {"type": "integer", "minimum": 1},
+    "revision": {"type": ["integer", "null"]},
+    "actor_id": {"type": "string"},
+    "agent_id": {"type": "string"},
+    "executor_id": {"const": "ledger-trusted-executor"},
+    "policy_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "outcome": {"const": "succeeded"},
+    "executed_at": {"type": "string", "format": "date-time"}
+  },
+  "$comment": "Content hash protects accidental drift. It is not a public-key signature or database-admin tamper proof."
+}

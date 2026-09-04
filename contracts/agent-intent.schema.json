@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ledger effect request (trusted host only)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["record_id", "revision", "action"],
+  "properties": {
+    "record_id": {"type": "string", "format": "uuid"},
+    "revision": {"type": "integer", "minimum": 1},
+    "action": {"enum": ["confirm", "reject"]}
+  },
+  "$comment": "Owner, agent, frozen snapshot, args_hash, policy and approval are server-owned. Idempotency-Key header required."
+}

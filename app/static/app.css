@@ -534,3 +534,10 @@ dialog {
     padding: 1rem;
   }
 }
+ .agent-snapshot {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 55vh;
+  overflow: auto;
+  font-size: .85rem;
+ }

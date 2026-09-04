@@ -5,6 +5,10 @@ description: 读取用户已授权的账目与预算摘要；仅在当前 Profil
 
 # Ledger Assistant
 
+v2 运行时按当前回合选择 research（问账）、capture（明确保存）或 steward（整理待处理），
+通过对应工具目录执行；不在同一回合合并三个目录。旧 Profile 的工具命名兼容以下说明。
+读取分析不要切换到捕获权限。审批通过 Ledger 的持久审核链完成，长期 write grant 不等于人类批准。
+
 仅在用户需要查看自己的收支、预算进度或明确要求保存记账草案时使用本 Skill。必须以当前 Profile
 实际提供的工具为能力真相，Skill 文字本身不授予写权限。
 

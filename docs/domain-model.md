@@ -371,3 +371,10 @@ SuggestionFeedback 按 (owner_id, episode_key) 唯一，状态为 active/dismiss
 Record 仍是唯一事实状态根，观察和反馈都不是 MoneyEntry，不参与金额统计。
 
 完整语义和未知金额规则见 [优化实现](optimization-implementation.md)。
+
+## ADR 0010：Agent 元数据（不参与金额事实）
+
+新增 AgentIntent（兼任冻结 ApprovalRequest）、AgentPolicyDecision、AgentApprovalGrant、
+AgentExecutionReceipt、AgentQueryRun、AgentCatalogSnapshot。Receipt 引用 Grant/Intent，Grant 引用
+策略决定。Intent 只引用 Record UUID，记录删除后审核证据仍保留；既有 Record 状态不迁移。
+一次性 Grant 消费与实际效果、Receipt、Outbox 同事务，原始凭据不入表。详见 Agent 方案。

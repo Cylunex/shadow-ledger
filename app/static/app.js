@@ -14,6 +14,7 @@ import { initPlanning } from "./planning.js";
 import { initInsights } from "./insights.js";
 import { initOffline } from "./offline.js";
 import { initMobile } from "./mobile.js";
+import { initAgent } from "./agent.js";
 
 $$(".page").forEach(
   (section) => (section.hidden = section.id !== `${page}-page`),
@@ -36,6 +37,7 @@ async function boot() {
     insights: initInsights,
   };
   initializers[page]?.();
+  initAgent();
   initMobile();
   try {
     initOffline();

@@ -38,7 +38,7 @@ from app.schemas import (
     StrictModel,
     jsonable,
 )
-from app.services.records import confirm_record, create_record, get_record
+from app.services.records import create_record, get_record
 
 router = APIRouter(prefix="/api/machine/v1/agent", tags=["machine-agent"])
 
@@ -52,6 +52,13 @@ class AgentRecordDraftCreate(StrictModel):
     category_key: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,49}$")
     title: str = Field(default="", max_length=160)
     payment_method: PaymentMethod | None = None
+
+    @field_validator("amount", mode="before")
+    @classmethod
+    def decimal_input(cls, value):
+        if isinstance(value, (float, bool)):
+            raise ValueError("amount must be a decimal string, not binary float")
+        return value
 
     @field_validator("occurred_at")
     @classmethod
@@ -80,6 +87,7 @@ class AgentRecordDraftCreate(StrictModel):
 
 class AgentRecordDraftCommit(StrictModel):
     revision: int = Field(ge=1)
+    approval_grant_id: uuid.UUID | None = None
 
 
 class NexusReviewCreate(StrictModel):
@@ -520,33 +528,12 @@ def agent_draft_commit(
 ) -> dict[str, object]:
     identity = _require_agent(request, authorization, "ledger.records.write")
     grant = _grant(db, identity, "allow_confirm")
-    record = _owned_agent_draft(db, grant, identity, record_id)
-    if record.state == "confirmed":
-        return {
-            "record_ref": f"shadow://ledger/records/{record.id}",
-            "state": "confirmed",
-            "revision": record.revision,
-            "replayed": True,
-            "final_entry_created": True,
-        }
-    if record.state != "draft":
-        raise AppError(409, "invalid_state_transition", "只有草稿可以确认")
-
-    record = confirm_record(
-        db,
-        grant.owner_id,
-        record_id,
-        body.revision,
-        identity.agent_id,
-        actor_type="agent",
-    )
-    return {
-        "record_ref": f"shadow://ledger/records/{record.id}",
-        "state": "confirmed",
-        "revision": record.revision,
-        "replayed": False,
-        "final_entry_created": True,
-    }
+    if body.approval_grant_id is None:
+        raise AppError(428, "approval_required", "需要用户在 Ledger 审核精确内容后签发的一次性批准")
+    from app.services.agent_effects import execute
+    result = execute(db, grant.owner_id, identity.agent_id, body.approval_grant_id,
+                   record_id=record_id, revision=body.revision, action="confirm")
+    return {key: result[key] for key in ("record_ref", "state", "revision", "replayed", "final_entry_created", "receipt")}
 
 
 @router.post("/drafts/{record_id}/reject", status_code=status.HTTP_200_OK)
@@ -559,44 +546,12 @@ def agent_draft_reject(
 ) -> dict[str, object]:
     identity = _require_agent(request, authorization, "ledger.records.write")
     grant = _grant(db, identity, "allow_confirm")
-    rejected = db.scalar(
-        select(AuditEvent.id).where(
-            AuditEvent.owner_id == grant.owner_id,
-            AuditEvent.aggregate_type == "record",
-            AuditEvent.aggregate_id == record_id,
-            AuditEvent.action == "record.draft_rejected",
-            AuditEvent.actor_type == "agent",
-            AuditEvent.actor_id == identity.agent_id,
-        )
-    )
-    if rejected is not None:
-        return {
-            "record_ref": f"shadow://ledger/records/{record_id}",
-            "state": "rejected",
-            "replayed": True,
-        }
-    record = _owned_agent_draft(db, grant, identity, record_id)
-    if record.state != "draft":
-        raise AppError(409, "invalid_state_transition", "只有草稿可以退回")
-    if record.revision != body.revision:
-        raise AppError(409, "revision_conflict", "记录已被其他操作修改，请刷新后重试")
-    db.delete(record)
-    db.add(
-        AuditEvent(
-            owner_id=grant.owner_id,
-            actor_type="agent",
-            actor_id=identity.agent_id,
-            action="record.draft_rejected",
-            aggregate_type="record",
-            aggregate_id=record_id,
-        )
-    )
-    db.commit()
-    return {
-        "record_ref": f"shadow://ledger/records/{record_id}",
-        "state": "rejected",
-        "replayed": False,
-    }
+    if body.approval_grant_id is None:
+        raise AppError(428, "approval_required", "删除草稿也需要用户精确批准")
+    from app.services.agent_effects import execute
+    result = execute(db, grant.owner_id, identity.agent_id, body.approval_grant_id,
+                   record_id=record_id, revision=body.revision, action="reject")
+    return {key: result[key] for key in ("record_ref", "state", "replayed", "receipt")}
 
 
 def _review_text(fields: dict[str, object], key: str, *, maximum: int) -> str | None:
@@ -795,7 +750,7 @@ def commit_nexus_ledger_review(
         record,
         db,
         request.state.request_id,
-        receipt=str(result["record_ref"]),
+        receipt=str(result["receipt"]),
         replayed=bool(result["replayed"]),
     )
 
@@ -826,7 +781,7 @@ def reject_nexus_ledger_review(
         "created_at": datetime.now(UTC).isoformat(),
         "source_refs": [],
         "trace_id": request.state.request_id,
-        "receipt": None,
+        "receipt": result["receipt"],
         "replayed": bool(result["replayed"]),
     }
 

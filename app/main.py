@@ -4,7 +4,7 @@ import json
 import logging
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -24,6 +24,8 @@ from app.errors import AppError, app_error_handler
 from app.external import external_prefix
 from app.machine import router as machine_router
 from app.oidc import router as oidc_router
+from app.routers.agent_control import browser as agent_browser
+from app.routers.agent_control import machine as agent_machine
 from app.routers.workbench import router as workbench_router
 from app.security import validate_csrf
 
@@ -42,9 +44,12 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         init_database(database_url)
-        yield
+        async with AsyncExitStack() as stack:
+            for server in getattr(app.state, "remote_mcp_servers", []):
+                await stack.enter_async_context(server.session_manager.run())
+            yield
 
-    app = FastAPI(title="Shadow Ledger", version="1.1.0", lifespan=lifespan)
+    app = FastAPI(title="Shadow Ledger", version="1.3.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.agent_access = AgentAccess(
         registry_path=settings.agent_registry_path,
@@ -71,6 +76,11 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
     app.include_router(api_router)
     app.include_router(workbench_router)
     app.include_router(machine_router)
+    app.include_router(agent_machine)
+    app.include_router(agent_browser)
+    if settings.mcp_http_enabled:
+        from app.agent_mcp import mount_remote
+        app.state.remote_mcp_servers = mount_remote(app, settings)
     app.add_exception_handler(AppError, app_error_handler)
 
     @app.middleware("http")

@@ -1,5 +1,8 @@
 # MCP 与自动抓单
 
+1.3 新增可选 v2 任务目录和远程 Streamable HTTP；兼容 stdio 默认不变。
+开关、最小披露、固定任务路径及 OAuth 联调限制见 [Agent 方案](agent-optimization-2026-09.md)。
+
 ## Ledger MCP
 
 `ledger-mcp` 使用官方 MCP Python SDK v2 的 stdio transport，由客户端作为本地子进程启动。它直接

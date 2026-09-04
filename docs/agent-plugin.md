@@ -1,5 +1,9 @@
 # Ledger Shadow Agent 插件
 
+> 1.3 安全升级：ADR 0010 覆盖本文早期 commit/reject 的长期授权语义。allow_confirm 仅为审核资格，
+> 还必须有 Ledger 用户签发的精确一次性 approval_grant_id；缺失返回 428。真实 Receipt 使用独立 URI。
+> v2 工具目录、Skill 和 MCP 接入详见 [Agent 方案](agent-optimization-2026-09.md)。
+
 Ledger 仍是独立部署、独立存储和独立授权的领域应用。仓库内插件文件只描述远程能力，既不包含
 DSH/Cordis 依赖，也不把业务代码或领域数据搬入 Platform。Platform 为独立 `shadow-ledger`
 Profile 生成一份通用 Bundle，DSH 使用 Ledger 专属凭据直连本服务，Platform 不代理财务数据。

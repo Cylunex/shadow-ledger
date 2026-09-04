@@ -206,6 +206,9 @@ def mcp_create_draft(
 
 def build_mcp_server(settings: Settings | None = None) -> MCPServer:
     settings = settings or get_settings()
+    if settings.mcp_agent_v2:
+        from app.agent_mcp import build_local_v2
+        return build_local_v2(settings)
     if settings.mcp_owner_id_file is None:
         raise RuntimeError("LEDGER_MCP_OWNER_ID_FILE is required")
     owner_id = read_owner_id(settings.mcp_owner_id_file)

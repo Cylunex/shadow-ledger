@@ -67,7 +67,7 @@ app/cli/                    wheel 可用的迁移与运行证据命令
 3. 接入生产备份、指标抓取和告警；
 4. 以确定性 Forecast 作为基线积累回测数据，不提前引入机器学习或自动确认。
 
-当前版本为 1.2.0，迁移头为 0007。生产升级前执行最新迁移，并在仓库外提供 MCP/intake owner
+当前版本为 1.3.0，迁移头为 0008。生产升级前执行最新迁移，并在仓库外提供 MCP/intake owner
 文件和最小权限配置，不允许从早期 0005 状态直接启动新应用。
 
 ## 6. 消费工作台优化（ADR 0009）
@@ -79,3 +79,11 @@ app/cli/                    wheel 可用的迁移与运行证据命令
 新增来源观察、跨运行反馈、统一待处理、部分退款候选、显式批量选中、消费记忆、建议回看、
 文本本机队列与模块化前端。旧 Record/URI 和金额不迁移重写。本地隔离 PostgreSQL 已做迁移／并发
 验收；NAS 实际发布／恢复与支付宝、微信实际导出样本仍是外部验收门槛。
+
+## 7. Agent 控制面（ADR 0010）
+
+实现前同时阅读 [ADR 0010](decisions/0010-agent-control-plane.md) 和
+[Agent 方案与交付](agent-optimization-2026-09.md)。`app/services/agent_*` 承接查询、草稿、目录与
+审批，`app/routers/agent_control.py` 区分机器和用户会话，`app/agent_mcp.py` 是官方 SDK 适配器。
+旧 Nexus commit/reject 必须携带用户批准后签发的 approval_grant_id，否则 428；不能为兼容旧 Host
+恢复长期 allow_confirm 直接入账。远程 MCP 默认关闭，OAuth/生产 Host/NAS 联调不属于本地验收。

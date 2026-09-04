@@ -10,6 +10,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from conftest import test_database_url as database_test_url
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
@@ -46,6 +47,7 @@ def agent_app_factory(settings: Settings, tmp_path: Path):
         allow_drafts: bool = True,
         allow_confirm: bool = True,
         audiences: tuple[str, ...] = ("ledger",),
+        mcp_http_enabled: bool = False,
     ) -> Iterator[tuple[TestClient, object]]:
         secrets_dir = tmp_path / ("agent-secrets-" + hashlib.sha256(" ".join(scopes).encode()).hexdigest()[:8])
         digest_path = secrets_dir / "agents" / AGENT_ID / "current-token.sha256"
@@ -74,9 +76,10 @@ def agent_app_factory(settings: Settings, tmp_path: Path):
                 "agent_secrets_dir": secrets_dir,
                 "oidc_callbacks": ["https://ledger.example.com/auth/callback"],
                 "allowed_origins": ["https://ledger.example.com"],
+                "mcp_http_enabled": mcp_http_enabled,
             }
         )
-        app = create_app(resolved, "sqlite+pysqlite:///:memory:")
+        app = create_app(resolved, database_test_url())
         with TestClient(app, base_url="https://ledger.example.com") as client:
             assert database.engine is not None
             Base.metadata.create_all(database.engine)
@@ -103,6 +106,17 @@ def agent_app_factory(settings: Settings, tmp_path: Path):
 
 def _authorization() -> dict[str, str]:
     return {"Authorization": f"Bearer {TOKEN}"}
+
+
+def approve_review(client, record_id, revision=1, action="confirm"):
+    response = client.post("/api/machine/v1/agent/review-requests", headers={**_authorization(),
+        "Idempotency-Key": f"review-{action}-{record_id}"}, json={"record_id": str(record_id), "revision": revision, "action": action})
+    assert response.status_code == 200, response.text
+    intent = response.json()
+    approved = client.post(f"/api/v1/agent/reviews/{intent['intent_id']}/decision", headers={"X-Dev-User": OWNER_ID},
+        json={"display_hash": intent["args_hash"], "accept": True})
+    assert approved.status_code == 200, approved.text
+    return approved.json()["approval_grant_id"]
 
 
 def test_machine_api_accepts_loopback_host_in_production(agent_app_factory) -> None:
@@ -316,15 +330,16 @@ def test_reviewed_agent_draft_commit_is_scoped_audited_and_idempotent(
             json=payload,
         )
         record_id = created.json()["record_ref"].rsplit("/", 1)[-1]
+        approval = approve_review(client, record_id)
         committed = client.post(
             f"/api/machine/v1/agent/drafts/{record_id}/commit",
             headers=_authorization(),
-            json={"revision": created.json()["revision"]},
+            json={"revision": created.json()["revision"], "approval_grant_id": approval},
         )
         repeated = client.post(
             f"/api/machine/v1/agent/drafts/{record_id}/commit",
             headers=_authorization(),
-            json={"revision": created.json()["revision"]},
+            json={"revision": created.json()["revision"], "approval_grant_id": approval},
         )
 
         assert created.status_code == 201
@@ -343,8 +358,8 @@ def test_reviewed_agent_draft_commit_is_scoped_audited_and_idempotent(
             )
             assert record is not None and record.state == "confirmed"
             assert audit is not None
-            assert audit.actor_type == "agent"
-            assert audit.actor_id == AGENT_ID
+            assert audit.actor_type == "user"
+            assert audit.actor_id == OWNER_ID
 
 
 def test_agent_draft_commit_requires_write_scope_and_resource_grant(agent_app_factory) -> None:
@@ -411,10 +426,11 @@ def test_pending_agent_drafts_can_be_federated_and_rejected_from_nexus(
         )
         record_id = created.json()["record_ref"].rsplit("/", 1)[-1]
         pending = client.get("/api/machine/v1/agent/drafts", headers=_authorization())
+        approval = approve_review(client, record_id, action="reject")
         rejected = client.post(
             f"/api/machine/v1/agent/drafts/{record_id}/reject",
             headers=_authorization(),
-            json={"revision": 1},
+            json={"revision": 1, "approval_grant_id": approval},
         )
         remaining = client.get("/api/machine/v1/agent/drafts", headers=_authorization())
 
@@ -437,7 +453,7 @@ def test_pending_agent_drafts_can_be_federated_and_rejected_from_nexus(
         replayed = client.post(
             f"/api/machine/v1/agent/drafts/{record_id}/reject",
             headers=_authorization(),
-            json={"revision": 1},
+            json={"revision": 1, "approval_grant_id": approval},
         )
         assert replayed.status_code == 200
         assert replayed.json()["replayed"] is True
@@ -446,9 +462,9 @@ def test_pending_agent_drafts_can_be_federated_and_rejected_from_nexus(
         with database.SessionLocal() as session:
             assert session.get(LedgerRecord, uuid.UUID(record_id)) is None
             rejected_audit = session.scalar(
-                select(AuditEvent).where(AuditEvent.action == "record.draft_rejected")
+                select(AuditEvent).where(AuditEvent.action == "record.draft_deleted")
             )
-            assert rejected_audit is not None and rejected_audit.actor_type == "agent"
+            assert rejected_audit is not None and rejected_audit.actor_type == "user"
 
 
 def test_standard_nexus_review_protocol_creates_lists_and_commits(agent_app_factory) -> None:
@@ -481,14 +497,15 @@ def test_standard_nexus_review_protocol_creates_lists_and_commits(agent_app_fact
         assert listed.status_code == 200, listed.text
         assert [item["review_id"] for item in listed.json()["items"]] == [review["review_id"]]
 
+        approval = approve_review(client, review["review_id"], review["revision"])
         committed = client.post(
             f"/api/machine/v1/agent/nexus/reviews/{review['review_id']}/commit",
             headers=_authorization(),
-            json={"revision": review["revision"]},
+            json={"revision": review["revision"], "approval_grant_id": approval},
         )
         assert committed.status_code == 200, committed.text
         assert committed.json()["state"] == "committed"
-        assert committed.json()["receipt"] == review["reference"]
+        assert committed.json()["receipt"].startswith("shadow://ledger/receipts/")
 
 
 def test_nexus_review_preserves_rich_consumption_and_source_refs(agent_app_factory) -> None:
@@ -574,10 +591,11 @@ def test_nexus_review_preserves_rich_consumption_and_source_refs(agent_app_facto
         assert mismatch.status_code == 409
         assert mismatch.json()["error"]["code"] == "idempotency_mismatch"
 
+        approval = approve_review(client, record_id, review["revision"])
         committed = client.post(
             f"/api/machine/v1/agent/nexus/reviews/{record_id}/commit",
             headers=_authorization(),
-            json={"revision": review["revision"]},
+            json={"revision": review["revision"], "approval_grant_id": approval},
         )
         assert committed.status_code == 200, committed.text
         assert committed.json()["state"] == "committed"

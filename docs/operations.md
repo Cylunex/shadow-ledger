@@ -69,3 +69,12 @@ alembic.ini 与插件合同，可供发布工具定位；部署工具须显式�
 - 使用真实备份做隔离恢复并核对数据库与 Asset 引用，按现有 ledger-restore-verify 记录证据；
   只有脚本存在或本地测试通过，不代表 NAS 恢复演练成功。
 - 记录实际内存／磁盘峰值、查询耗时与导入耗时。未有真实基线前不承诺 P95 或资源上限。
+
+## 1.3 / 0008 Agent 发布门槛
+
+先备份并隔离升级，0008 新增六张 Agent 表，不为历史状态补造批准。旧 Host 必须适配
+approval_grant_id；不得为兼容恢复旧 commit/reject 权限旁路。详见 [Agent 方案](agent-optimization-2026-09.md)。
+远程 MCP 默认关闭；需要 HTTPS、精确 Origin、Ledger audience 的受限 Agent registry/grant。
+预配置 Bearer 不是 OAuth 自动发现，不新增 issuer。审批网页不能使用 LAN bypass，需要真实登录。
+查询证据 explain 7 天过期、Grant 10 分钟、Intent 24 小时；过期不自动删表，保留/清理需明确运维策略。
+回归执行 `pytest`、`node --test tests/frontend/client.test.mjs` 和 `ruff check app tests scripts`。
