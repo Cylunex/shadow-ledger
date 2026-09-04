@@ -279,7 +279,7 @@ def parse_capture(spec):
         flags.append("CURRENCY_REQUIRES_CLARIFICATION")
     if spec.currency != "CNY" and re.search(r"元|块|¥|￥", text):
         flags.append("CURRENCY_REQUIRES_CLARIFICATION")
-    if len(amounts) == 1 and amounts[0][1] > 0 and len(amounts[0][1].as_tuple().digits) <= 18:
+    if len(amounts) == 1 and Decimal(0) < amounts[0][1] < Decimal("100000000000000"):
         match, amount = amounts[0]
         candidate["amount"] = format(amount, ".4f")
         evidence["amount"] = {

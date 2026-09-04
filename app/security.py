@@ -57,7 +57,7 @@ def current_actor(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> Actor:
-    if is_lan_bypass(request):
+    if is_lan_bypass(request, settings=settings):
         identity = db.scalar(
             select(LocalIdentity)
             .where(LocalIdentity.enabled.is_(True))
@@ -106,10 +106,17 @@ def require_scope(scope: str):
     return dependency
 
 
+def user_actor(actor: Actor = Depends(current_actor)) -> Actor:
+    """Unscoped interactive endpoints are not a fallback API for service tokens."""
+    if actor.actor_type != "user":
+        raise AppError(403, "user_session_required", "此功能需要用户会话，请使用已授权的服务接口")
+    return actor
+
+
 def validate_csrf(request: Request, settings: Settings) -> None:
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return
-    if is_lan_bypass(request):
+    if is_lan_bypass(request, settings=settings):
         if is_same_external_origin(request):
             return
         raise AppError(403, "invalid_origin", "请求来源不受信任")

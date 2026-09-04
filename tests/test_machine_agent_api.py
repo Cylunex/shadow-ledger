@@ -49,7 +49,9 @@ def agent_app_factory(settings: Settings, tmp_path: Path):
         audiences: tuple[str, ...] = ("ledger",),
         mcp_http_enabled: bool = False,
     ) -> Iterator[tuple[TestClient, object]]:
-        secrets_dir = tmp_path / ("agent-secrets-" + hashlib.sha256(" ".join(scopes).encode()).hexdigest()[:8])
+        secrets_dir = tmp_path / (
+            "agent-secrets-" + hashlib.sha256(" ".join(scopes).encode()).hexdigest()[:8]
+        )
         digest_path = secrets_dir / "agents" / AGENT_ID / "current-token.sha256"
         digest_path.parent.mkdir(parents=True, exist_ok=True)
         digest_path.write_text(hashlib.sha256(TOKEN.encode()).hexdigest(), encoding="utf-8")
@@ -109,12 +111,18 @@ def _authorization() -> dict[str, str]:
 
 
 def approve_review(client, record_id, revision=1, action="confirm"):
-    response = client.post("/api/machine/v1/agent/review-requests", headers={**_authorization(),
-        "Idempotency-Key": f"review-{action}-{record_id}"}, json={"record_id": str(record_id), "revision": revision, "action": action})
+    response = client.post(
+        "/api/machine/v1/agent/review-requests",
+        headers={**_authorization(), "Idempotency-Key": f"review-{action}-{record_id}"},
+        json={"record_id": str(record_id), "revision": revision, "action": action},
+    )
     assert response.status_code == 200, response.text
     intent = response.json()
-    approved = client.post(f"/api/v1/agent/reviews/{intent['intent_id']}/decision", headers={"X-Dev-User": OWNER_ID},
-        json={"display_hash": intent["args_hash"], "accept": True})
+    approved = client.post(
+        f"/api/v1/agent/reviews/{intent['intent_id']}/decision",
+        headers={"X-Dev-User": OWNER_ID},
+        json={"display_hash": intent["args_hash"], "accept": True},
+    )
     assert approved.status_code == 200, approved.text
     return approved.json()["approval_grant_id"]
 
@@ -202,9 +210,7 @@ def test_machine_bearer_scope_and_resource_grant_fail_closed(agent_app_factory) 
     assert wrong_audience.json()["error"]["code"] == "machine_bearer_invalid"
 
     with agent_app_factory(("ledger.records.read",), allow_records=False) as (client, _):
-        denied = client.get(
-            "/api/machine/v1/agent/records?month=2026-08", headers=_authorization()
-        )
+        denied = client.get("/api/machine/v1/agent/records?month=2026-08", headers=_authorization())
         wrong_scope = client.get(
             "/api/machine/v1/agent/summary?month=2026-08", headers=_authorization()
         )
@@ -250,7 +256,9 @@ def test_machine_reads_are_minimal_currency_bounded_and_audited(agent_app_factor
         with database.SessionLocal() as session:
             audits = list(
                 session.scalars(
-                    select(AuditEvent).where(AuditEvent.actor_type == "agent").order_by(AuditEvent.action)
+                    select(AuditEvent)
+                    .where(AuditEvent.actor_type == "agent")
+                    .order_by(AuditEvent.action)
                 )
             )
         audit_payload = json.dumps([row.details for row in audits], sort_keys=True)
@@ -300,9 +308,7 @@ def test_agent_draft_is_deterministic_reversible_and_idempotent(agent_app_factor
         with database.SessionLocal() as session:
             assert session.scalar(select(func.count()).select_from(LedgerRecord)) == 1
             record = session.scalar(select(LedgerRecord))
-            audit = session.scalar(
-                select(AuditEvent).where(AuditEvent.action == "record.created")
-            )
+            audit = session.scalar(select(AuditEvent).where(AuditEvent.action == "record.created"))
             assert record is not None and record.state == "draft"
             assert record.money_entry is not None
             assert record.money_entry.amount == Decimal("32.5000")
@@ -439,7 +445,9 @@ def test_pending_agent_drafts_can_be_federated_and_rejected_from_nexus(
         item = pending.json()["items"][0]
         assert item["record_ref"] == created.json()["record_ref"]
         assert item["revision"] == 1
-        assert item["occurred_at"].startswith("2026-08-25T12:10:00")
+        assert datetime.fromisoformat(item["occurred_at"]) == datetime.fromisoformat(
+            "2026-08-25T12:10:00+08:00"
+        )
         assert item["money_type"] == "expense"
         assert item["amount"] == "139.6300"
         assert item["currency"] == "CNY"
@@ -491,9 +499,7 @@ def test_standard_nexus_review_protocol_creates_lists_and_commits(agent_app_fact
         assert review["state"] == "pending"
         assert review["fields"]["amount"] == "36.5000"
 
-        listed = client.get(
-            "/api/machine/v1/agent/nexus/reviews", headers=_authorization()
-        )
+        listed = client.get("/api/machine/v1/agent/nexus/reviews", headers=_authorization())
         assert listed.status_code == 200, listed.text
         assert [item["review_id"] for item in listed.json()["items"]] == [review["review_id"]]
 

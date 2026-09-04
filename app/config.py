@@ -4,6 +4,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -55,8 +56,17 @@ class Settings(BaseSettings):
     @classmethod
     def currency(cls, value: str) -> str:
         value = value.upper()
-        if len(value) != 3 or not value.isalpha():
+        if len(value) != 3 or not value.isascii() or not value.isalpha():
             raise ValueError("default_currency must be a three-letter code")
+        return value
+
+    @field_validator("default_timezone")
+    @classmethod
+    def timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            raise ValueError("default_timezone must be a valid IANA name") from exc
         return value
 
     @field_validator("oidc_callbacks", "allowed_origins", "lan_bypass_hosts", mode="before")

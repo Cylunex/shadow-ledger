@@ -6,16 +6,51 @@ from decimal import Decimal
 from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 from app.payments import PaymentMethod
 
-Money = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=4)]
-Quantity = Annotated[Decimal, Field(gt=0, max_digits=12, decimal_places=4)]
+
+def decimal_input(value):
+    if isinstance(value, (float, bool)):
+        raise ValueError("use a decimal string, not a binary float or boolean")
+    return value
+
+
+Money = Annotated[
+    Decimal, BeforeValidator(decimal_input), Field(gt=0, max_digits=18, decimal_places=4)
+]
+Quantity = Annotated[
+    Decimal, BeforeValidator(decimal_input), Field(gt=0, max_digits=12, decimal_places=4)
+]
 
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("currency", check_fields=False)
+    @classmethod
+    def currency_code(cls, value):
+        if value is not None and (not value.isascii() or not value.isalpha() or len(value) != 3):
+            raise ValueError("currency must be a three-letter ASCII code")
+        return value.upper() if value else value
+
+    @field_validator("timezone", check_fields=False)
+    @classmethod
+    def timezone_name(cls, value):
+        if value is not None:
+            try:
+                ZoneInfo(value)
+            except (ValueError, ZoneInfoNotFoundError) as exc:
+                raise ValueError("timezone must be a valid IANA name") from exc
+        return value
+
+    @field_validator("occurred_at", "desired_start", "desired_end", check_fields=False)
+    @classmethod
+    def explicit_offset(cls, value):
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("timestamp must include a UTC offset")
+        return value
 
 
 class MoneyEntryInput(StrictModel):
@@ -40,7 +75,9 @@ class ConsumptionLineInput(StrictModel):
     item_identity_id: uuid.UUID | None = None
     quantity: Quantity | None = None
     unit: str | None = Field(default=None, max_length=30)
-    amount: Decimal | None = Field(default=None, max_digits=18, decimal_places=4)
+    amount: Annotated[Decimal, BeforeValidator(decimal_input)] | None = Field(
+        default=None, max_digits=18, decimal_places=4
+    )
     content_category: str | None = Field(default=None, max_length=100)
     note: str = Field(default="", max_length=2000)
     sort_order: int = Field(default=0, ge=0)
@@ -182,6 +219,12 @@ class IntentCreate(StrictModel):
     priority: Literal["low", "normal", "high"] = "normal"
     state: Literal["inbox", "considering", "planned", "due", "skipped", "cancelled"] = "inbox"
     reason: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def valid_dates(self):
+        if self.desired_start and self.desired_end and self.desired_start > self.desired_end:
+            raise ValueError("desired_end must not precede desired_start")
+        return self
 
 
 class CommitmentCreate(StrictModel):

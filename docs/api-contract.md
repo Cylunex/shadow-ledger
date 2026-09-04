@@ -266,6 +266,11 @@ UseCycle 只能引用同 owner 的已确认 Record；购买不会自动创建 Us
 
 ## 12. 服务、Agent 与 MCP 鉴权
 
+逻辑走查加固：无显式 scope 的界面控制接口仅允许用户会话（包含导出、计划与普通洞察）。
+服务必须使用明确授权的接口；仅有 ledger.write-draft 不能修改或补充已确认记录的金额。
+月度洞察接受 timezone，默认配置时区；商家统计以 currency 过滤并返回净支出，禁止跨币种相加。
+周期 draft 携带 Idempotency-Key 时绑定首次 occurrence，不随 Worker 的 next_due_at 推进而改变。
+
 服务 Token 使用文件注入的哈希映射，并分配最小 scope：
 
 ```text

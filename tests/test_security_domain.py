@@ -81,7 +81,8 @@ def test_ip_prefixed_lan_entry_uses_existing_identity_and_exact_origin():
         ],
     }
     request = Request(scope)
-    assert is_lan_bypass(request)
+    assert is_lan_bypass(request, settings=settings)
+    assert not is_lan_bypass(request, settings=settings.model_copy(update={"lan_bypass_hosts": []}))
     validate_csrf(request, settings)
 
     engine = make_engine("sqlite+pysqlite:///:memory:")

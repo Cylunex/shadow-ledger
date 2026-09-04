@@ -38,9 +38,10 @@ MAX_ROWS = 10000
 def period(spec):
     try:
         start = datetime.strptime(spec.month, "%Y-%m").replace(tzinfo=ZoneInfo(spec.timezone))
-    except (ValueError, ZoneInfoNotFoundError) as exc:
+        end = start + relativedelta(months=1)
+    except (ValueError, OverflowError, ZoneInfoNotFoundError) as exc:
         raise AppError(422, "invalid_period", "月份或时区无效") from exc
-    return start, start + relativedelta(months=1)
+    return start, end
 
 
 def base_rows(db, owner_id, spec, *, entity=None):
@@ -67,8 +68,8 @@ def base_rows(db, owner_id, spec, *, entity=None):
         .outerjoin(ConsumptionEvent, ConsumptionEvent.record_id == LedgerRecord.id)
         .where(
             LedgerRecord.owner_id == owner_id,
-            LedgerRecord.occurred_at >= start,
-            LedgerRecord.occurred_at < end,
+            LedgerRecord.occurred_at >= start.astimezone(UTC),
+            LedgerRecord.occurred_at < end.astimezone(UTC),
         )
     )
     if entity:
@@ -182,8 +183,8 @@ def search(db, ctx, spec):
         .where(
             LedgerRecord.owner_id == ctx.owner_id,
             LedgerRecord.state == "confirmed",
-            LedgerRecord.occurred_at >= start,
-            LedgerRecord.occurred_at < end,
+            LedgerRecord.occurred_at >= start.astimezone(UTC),
+            LedgerRecord.occurred_at < end.astimezone(UTC),
             (MoneyEntry.currency == spec.currency) | MoneyEntry.id.is_(None),
         )
     )

@@ -214,7 +214,7 @@ def create_record(
         owner_id=owner_id,
         record_kind="consumption" if data.consumption else "money_only",
         state="draft",
-        occurred_at=data.occurred_at,
+        occurred_at=data.occurred_at.astimezone(UTC),
         timezone=data.timezone,
         note=data.note,
     )
@@ -567,6 +567,7 @@ def patch_record(
     *,
     commit: bool = True,
     actor_type: str = "user",
+    draft_only: bool = False,
 ):
     record = db.scalar(
         record_query()
@@ -576,6 +577,8 @@ def patch_record(
     if record is None:
         raise AppError(404, "record_not_found", "记录不存在")
     _check_revision(record, revision)
+    if draft_only and record.state != "draft":
+        raise AppError(403, "confirmation_scope_required", "草稿权限不能修改已确认事实")
     if record.state == "voided":
         raise AppError(409, "record_voided", "已撤销记录不能修改")
     if record.state == "confirmed" and data.money_entry is not None and not data.correction_reason:
@@ -584,7 +587,7 @@ def patch_record(
     for field in ("occurred_at", "timezone", "note"):
         value = getattr(data, field)
         if value is not None:
-            setattr(record, field, value)
+            setattr(record, field, value.astimezone(UTC) if field == "occurred_at" else value)
             changes.append(field)
     if data.money_entry:
         if record.money_entry is None:
@@ -654,9 +657,20 @@ def add_money_entry(
     revision: int,
     data: MoneyEntryInput,
     actor_id: str,
+    *,
+    draft_only: bool = False,
+    actor_type: str = "user",
 ):
-    record = get_record(db, owner_id, record_id)
+    record = db.scalar(
+        record_query()
+        .where(LedgerRecord.id == record_id, LedgerRecord.owner_id == owner_id)
+        .with_for_update(of=LedgerRecord)
+    )
+    if record is None:
+        raise AppError(404, "record_not_found", "记录不存在")
     _check_revision(record, revision)
+    if draft_only and record.state != "draft":
+        raise AppError(403, "confirmation_scope_required", "草稿权限不能为已确认事实补充金额")
     if (
         record.record_kind != "consumption"
         or record.money_entry is not None
@@ -670,7 +684,7 @@ def add_money_entry(
     db.add(
         AuditEvent(
             owner_id=owner_id,
-            actor_type="user",
+            actor_type=actor_type,
             actor_id=actor_id,
             action="record.money_added",
             aggregate_type="record",
@@ -681,7 +695,9 @@ def add_money_entry(
     return get_record(db, owner_id, record.id)
 
 
-def delete_draft(db: Session, owner_id: str, record_id: uuid.UUID, revision: int, *, commit: bool = True) -> None:
+def delete_draft(
+    db: Session, owner_id: str, record_id: uuid.UUID, revision: int, *, commit: bool = True
+) -> None:
     from app.models import (
         ArchiveEvidenceLink,
         ImportBatch,

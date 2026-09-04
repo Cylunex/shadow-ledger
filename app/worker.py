@@ -71,10 +71,13 @@ def export_row(row: object) -> dict[str, object]:
 def create_due_reminders(db: Session) -> int:
     current = datetime.now(UTC)
     rows = db.scalars(
-        select(RecurringCommitment).where(
+        select(RecurringCommitment)
+        .where(
             RecurringCommitment.state == "active",
             RecurringCommitment.next_due_at <= current + timedelta(days=365),
         )
+        .order_by(RecurringCommitment.id)
+        .with_for_update(skip_locked=True)
     )
     created = 0
     for row in rows:
@@ -88,25 +91,28 @@ def create_due_reminders(db: Session) -> int:
                 Reminder.owner_id == row.owner_id, Reminder.reminder_key == key
             )
         )
-        if exists:
-            continue
-        db.add(
-            Reminder(
-                owner_id=row.owner_id,
-                reminder_key=key,
-                source_type="commitment",
-                source_id=row.id,
-                due_at=due_at,
-                state="pending",
-                payload={"title": row.title},
+        if not exists:
+            db.add(
+                Reminder(
+                    owner_id=row.owner_id,
+                    reminder_key=key,
+                    source_type="commitment",
+                    source_id=row.id,
+                    due_at=due_at,
+                    state="pending",
+                    payload={"title": row.title},
+                )
             )
-        )
-        created += 1
+            created += 1
         try:
-            rule = rrulestr(row.recurrence_rule, dtstart=due_at)
-            next_due = rule.after(due_at, inc=False)
+            local_due = due_at.astimezone(ZoneInfo(row.timezone))
+            rule = rrulestr(row.recurrence_rule, dtstart=local_due)
+            next_due = rule.after(local_due, inc=False)
             if next_due:
-                row.next_due_at = next_due
+                row.next_due_at = next_due.astimezone(UTC)
+            else:
+                row.state = "ended"
+            row.revision += 1
         except (ValueError, TypeError):
             log.warning("invalid recurrence rule", extra={"aggregate_id": str(row.id)})
     db.commit()

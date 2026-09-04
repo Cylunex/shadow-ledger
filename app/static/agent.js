@@ -8,7 +8,44 @@ import {
   busy,
   changed,
   key,
+  currentUser,
+  monthInTimezone,
 } from "./core.js";
+
+export function queryAnswer(question, result) {
+  if (question.includes("预算")) {
+    const rows = result.budgets || [];
+    return (
+      (rows.length
+        ? rows
+            .map(
+              (row) =>
+                `目标 ${row.target} ${row.currency}，已用 ${row.net_spending}，剩余 ${row.remaining}（${row.status}）`,
+            )
+            .join("；")
+        : "所选月份、币种没有可读取的消费目标。") +
+      (result.truncated || result.budgets_truncated ? "查询已截断。" : "")
+    );
+  }
+  const metric = question.includes("净支出")
+    ? "net_spending"
+    : question.includes("退款")
+      ? "refund"
+      : question.includes("收入")
+        ? "income"
+        : question.includes("支出")
+          ? "expense"
+          : null;
+  const match = (result.metrics || []).find((row) => row.metric_id === metric);
+  if (!match) return result.facts_text;
+  const label = {
+    net_spending: "净支出",
+    refund: "退款",
+    income: "收入",
+    expense: "支出",
+  }[metric];
+  return `${label} ${match.value} ${match.currency}。${result.facts_text}`;
+}
 
 async function tool(skill, name, args) {
   const catalog = await api(`/agent/catalog?skill=${skill}`);
@@ -102,13 +139,13 @@ async function loadReviews(append = false) {
 
 function initResearch() {
   const container = $("#insights-page");
-  const now = new Date();
-  const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const month = monthInTimezone(currentUser?.timezone || "Asia/Shanghai");
   container.insertAdjacentHTML(
     "afterbegin",
-    `<details class="panel"><summary>问账 · 有据可查</summary><p>直接调用确定性工具，不连接云模型。支持月度收支、预算和待处理建议；不自行猜测复杂问题。</p>
+    `<details class="panel"><summary>问账 · 有据可查</summary><p>直接调用确定性工具，不连接云模型。月度问题按所选月份；待处理、预测与周期查询当前事项，不受月份限制。</p>
     <form id="agent-question"><label>问题<input id="agent-question-text" placeholder="本月净支出多少？" maxlength="200"></label><label>月份<input id="agent-month" type="month" value="${month}" required></label><label>币种<input id="agent-currency" value="CNY" pattern="[A-Z]{3}" maxlength="3" required></label><button>查询</button></form><div id="agent-answer" role="status"></div></details>`,
   );
+  $("#agent-currency").value = currentUser?.default_currency || "CNY";
   $("#agent-question").onsubmit = (event) => {
     event.preventDefault();
     busy($("#agent-question button"), async () => {
@@ -136,11 +173,11 @@ function initResearch() {
           : {
               month: $("#agent-month").value,
               currency: $("#agent-currency").value,
-              timezone: "Asia/Shanghai",
+              timezone: currentUser?.timezone || "Asia/Shanghai",
             },
       );
       $("#agent-answer").innerHTML =
-        `<p>${esc(result.facts_text)}</p><details><summary>结构化数字、口径与查询凭证</summary><pre class="agent-snapshot">${esc(JSON.stringify(result, null, 2))}</pre></details>`;
+        `<p>${esc(queryAnswer(question, result))}</p><details><summary>结构化数字、口径与查询凭证</summary><pre class="agent-snapshot">${esc(JSON.stringify(result, null, 2))}</pre></details>`;
     }).catch(showError);
   };
 }
@@ -160,6 +197,7 @@ function initCapture() {
       const result = await tool("capture", "ledger_parse_capture", {
         text,
         occurred_at,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
       $("#agent-capture-result").innerHTML =
         `<pre class="agent-snapshot">${esc(JSON.stringify(result, null, 2))}</pre>${result.ready_for_draft ? '<button id="agent-save-capture" type="button">核对无误，保存草稿</button>' : "<p>信息存在缺失或歧义，请修正原文后重新解析，或使用普通录入。</p>"}`;

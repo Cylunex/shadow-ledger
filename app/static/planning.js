@@ -56,6 +56,57 @@ export async function loadPlanning(kind = current) {
           `<article class="list-item"><div><h3>${esc(row.title || row.label || row.payload?.title || "提醒")}</h3><p>${esc(states[row.state] || row.state)} · ${row.expected_amount ? money(row.expected_amount, row.currency) : "金额未知"}</p><span class="meta">${row.next_due_at ? dateValue(row.next_due_at).toLocaleString("zh-CN") : row.started_at ? dateValue(row.started_at).toLocaleDateString("zh-CN") : ""}</span></div><div class="actions">${["intents", "commitments"].includes(kind) ? `<button data-edit-plan="${row.id}">编辑</button>${!["completed", "cancelled", "ended", "paused", "skipped"].includes(row.state) ? `<button data-plan-draft="${row.id}">生成待确认草稿</button>` : ""}` : ""}${kind === "cycles" && row.state === "active" ? `<button data-end-cycle="${row.id}">明确结束使用</button>` : ""}${kind === "reminders" && ["pending", "read"].includes(row.state) ? `<button data-dismiss-reminder="${row.id}">关闭提醒</button>` : ""}</div></article>`,
       )
       .join("") || '<p class="muted">这里还没有内容。</p>';
+  data.items.forEach((row, index) => {
+    const article = $("#planning-list").querySelectorAll("article")[index];
+    const actions = article.querySelector(".actions");
+    if (["intents", "commitments"].includes(kind) && !row.expected_amount)
+      article.querySelector("p").textContent =
+        `${states[row.state] || row.state} · 未设预计金额`;
+    if (kind === "reminders") {
+      article.querySelector(".meta").textContent = dateValue(
+        row.due_at,
+      ).toLocaleString("zh-CN");
+      article.querySelector("p").textContent =
+        `${states[row.state] || row.state} · 提醒不代表已付款`;
+    }
+    if (kind === "intents" && row.state === "completed") {
+      actions.querySelector("[data-edit-plan]")?.remove();
+      if (row.completed_record_id) {
+        const button = document.createElement("button");
+        button.textContent = "查看关联记录";
+        button.onclick = () =>
+          showRecord(row.completed_record_id).catch(showError);
+        actions.append(button);
+      }
+    }
+    if (
+      kind === "intents" &&
+      !["completed", "cancelled", "skipped"].includes(row.state)
+    ) {
+      const button = document.createElement("button");
+      button.textContent = "关联已确认记录完成";
+      button.onclick = () => completePlan(row);
+      actions.append(button);
+    }
+    if (
+      kind === "reminders" &&
+      row.source_type === "commitment" &&
+      ["pending", "read"].includes(row.state)
+    ) {
+      const button = document.createElement("button");
+      button.textContent = "为这次提醒生成草稿";
+      button.onclick = () =>
+        busy(button, async () => {
+          const record = await api(
+            `/recurring-commitments/${row.source_id}/draft?${new URLSearchParams({ occurrence: row.due_at })}`,
+            { method: "POST" },
+          );
+          await loadPlanning("reminders");
+          await showRecord(record.id);
+        });
+      actions.append(button);
+    }
+  });
   $$("[data-edit-plan]").forEach(
     (button) =>
       (button.onclick = () =>
@@ -102,6 +153,47 @@ export async function loadPlanning(kind = current) {
           await loadPlanning();
         })),
   );
+}
+function completePlan(row) {
+  openDialog(
+    `<h2>完成计划：${esc(row.title)}</h2><p>选择已经确认的消费，不会自动录入新事实。</p><form id="complete-search"><label>搜索标题或商家<input id="complete-query" maxlength="200"></label><button>查找</button></form><form id="complete-plan"><label>已确认记录<select id="complete-record" required></select></label><p>最多显示 50 条；找不到时请缩小搜索范围。</p><button type="submit">关联并完成计划</button><p id="complete-status" role="status"></p></form>`,
+  );
+  const load = async () => {
+    const result = await api(
+      `/records?${new URLSearchParams({ state: "confirmed", limit: "50", query: $("#complete-query").value.trim() })}`,
+    );
+    $("#complete-record").innerHTML =
+      '<option value="">请选择已确认记录</option>' +
+      result.items
+        .map(
+          (record) =>
+            `<option value="${record.id}">${esc(record.money_entry?.title || record.consumption?.merchant_name_raw || "消费记录")} · ${esc(dateValue(record.occurred_at).toLocaleString("zh-CN"))} · ${record.money_entry ? money(record.money_entry.amount, record.money_entry.currency) : "金额未知"}</option>`,
+        )
+        .join("");
+  };
+  $("#complete-search").onsubmit = (event) => {
+    event.preventDefault();
+    busy(event.submitter, load, $("#complete-status"));
+  };
+  $("#complete-plan").onsubmit = (event) => {
+    event.preventDefault();
+    busy(
+      event.submitter,
+      async () => {
+        const id = $("#complete-record").value;
+        if (!id) throw new Error("请选择已确认记录");
+        await api(`/intents/${row.id}/complete?record_id=${id}`, {
+          method: "POST",
+          headers: { "If-Match": String(row.revision) },
+        });
+        $("#dialog").close();
+        changed();
+        await loadPlanning("intents");
+      },
+      $("#complete-status"),
+    );
+  };
+  load().catch(showError);
 }
 function editPlan(kind, row = null) {
   const periodic = kind === "commitments";

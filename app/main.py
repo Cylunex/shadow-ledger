@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -80,18 +81,16 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
     app.include_router(agent_browser)
     if settings.mcp_http_enabled:
         from app.agent_mcp import mount_remote
+
         app.state.remote_mcp_servers = mount_remote(app, settings)
     app.add_exception_handler(AppError, app_error_handler)
 
     @app.middleware("http")
-    async def forwarded_prefix(request: Request, call_next):
-        value = request.headers.get("X-Forwarded-Prefix", "").strip()
-        if value.startswith("/") and value != "/":
-            request.scope["x_forwarded_prefix"] = value.rstrip("/")
-        return await call_next(request)
-
-    @app.middleware("http")
     async def safety_headers(request: Request, call_next):
+        # Parse before CSRF validation, and never allow a prefix to become a network-path redirect.
+        value = request.headers.get("X-Forwarded-Prefix", "").strip().rstrip("/")
+        if re.fullmatch(r"(?:/[A-Za-z0-9_-]+)+", value):
+            request.scope["x_forwarded_prefix"] = value
         request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
         request.state.request_id = request_id
         started = time.monotonic()

@@ -82,7 +82,7 @@ from app.schemas import (
     UseCycleTransition,
     jsonable,
 )
-from app.security import Actor, current_actor, require_scope
+from app.security import Actor, require_scope, user_actor
 from app.services.feedback import decorate_run, save_feedback
 from app.services.forecast import generate_forecast, serialize_run, verify_run
 from app.services.import_review import (
@@ -177,7 +177,7 @@ def remember_create(
 
 
 @router.get("/me")
-def me(actor: Actor = Depends(current_actor), settings: Settings = Depends(get_settings)):
+def me(actor: Actor = Depends(user_actor), settings: Settings = Depends(get_settings)):
     return {
         "owner_id": actor.owner_id,
         "default_currency": settings.default_currency,
@@ -273,7 +273,14 @@ def records_patch(
     db: Session = Depends(get_db),
 ):
     record = patch_record(
-        db, actor.owner_id, record_id, parse_etag(if_match), data, actor_id(actor)
+        db,
+        actor.owner_id,
+        record_id,
+        parse_etag(if_match),
+        data,
+        actor_id(actor),
+        draft_only="ledger.confirm" not in actor.scopes,
+        actor_type=actor.actor_type,
     )
     etag(response, record.revision)
     return serialize_record(db, record)
@@ -333,7 +340,14 @@ def records_money(
     db: Session = Depends(get_db),
 ):
     record = add_money_entry(
-        db, actor.owner_id, record_id, parse_etag(if_match), data, actor_id(actor)
+        db,
+        actor.owner_id,
+        record_id,
+        parse_etag(if_match),
+        data,
+        actor_id(actor),
+        draft_only="ledger.confirm" not in actor.scopes,
+        actor_type=actor.actor_type,
     )
     etag(response, record.revision)
     return serialize_record(db, record)
@@ -376,7 +390,7 @@ def ensure_categories(db: Session, owner_id: str) -> None:
 
 
 @router.get("/categories")
-def categories_list(actor: Actor = Depends(current_actor), db: Session = Depends(get_db)):
+def categories_list(actor: Actor = Depends(user_actor), db: Session = Depends(get_db)):
     ensure_categories(db, actor.owner_id)
     rows = db.scalars(
         select(MoneyCategory)
@@ -395,7 +409,7 @@ def categories_list(actor: Actor = Depends(current_actor), db: Session = Depends
 def categories_create(
     data: CategoryCreate,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     replay = replayed_create(
@@ -427,7 +441,7 @@ def categories_create(
 def categories_patch(
     category_id: uuid.UUID,
     data: CategoryPatch,
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     row = owned(db, MoneyCategory, category_id, actor.owner_id, "category")
@@ -562,7 +576,7 @@ def capture_text(
 
 @router.get("/capture-sources/{source_id}")
 def capture_source_get(
-    source_id: uuid.UUID, actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
+    source_id: uuid.UUID, actor: Actor = Depends(user_actor), db: Session = Depends(get_db)
 ):
     row = owned(db, CaptureSource, source_id, actor.owner_id, "capture_source")
     links = db.scalars(select(LedgerRecordSource).where(LedgerRecordSource.source_id == row.id))
@@ -700,7 +714,7 @@ def asset_complete(
 
 
 @router.post("/imports/preview")
-def imports_preview(data: ImportPreview, actor: Actor = Depends(current_actor)):
+def imports_preview(data: ImportPreview, actor: Actor = Depends(user_actor)):
     if data.format in {"markdown", "csv"}:
         try:
             parsed = parse_text_import(data.content, data.format)
@@ -1020,7 +1034,7 @@ def imports_commit(
 def import_reviews_list(
     state: str | None = Query(default=None, pattern="^(pending|resolved|dismissed)$"),
     limit: int = Query(default=100, ge=1, le=500),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     stmt = select(ImportReviewItem).where(ImportReviewItem.owner_id == actor.owner_id)
@@ -1051,7 +1065,7 @@ def import_reviews_list(
 @router.get("/import-batches/{batch_id}")
 def import_batch_get(
     batch_id: uuid.UUID,
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     batch = owned(db, ImportBatch, batch_id, actor.owner_id, "import_batch")
@@ -1079,7 +1093,7 @@ def _refresh_batch_state(db: Session, batch_id: uuid.UUID) -> None:
 def import_review_resolve(
     review_id: uuid.UUID,
     data: ImportReviewResolve,
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     if actor.actor_type != "user":
@@ -1092,7 +1106,7 @@ def import_review_resolve(
 @router.get("/merchant-normalization-rules")
 def merchant_rules_list(
     active: bool | None = None,
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     stmt = select(MerchantNormalizationRule).where(
@@ -1126,7 +1140,7 @@ def merchant_rules_list(
 def merchant_rule_revoke(
     rule_id: uuid.UUID,
     data: RuleRevoke,
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     if actor.actor_type != "user":
@@ -1160,13 +1174,13 @@ def merchant_rule_revoke(
 
 
 @router.get("/insights/data-quality")
-def insight_data_quality(actor: Actor = Depends(current_actor), db: Session = Depends(get_db)):
+def insight_data_quality(actor: Actor = Depends(user_actor), db: Session = Depends(get_db)):
     return quality_metrics(db, actor.owner_id)
 
 
 @router.get("/merchants")
 def merchants_list(
-    query: str | None = None, actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
+    query: str | None = None, actor: Actor = Depends(user_actor), db: Session = Depends(get_db)
 ):
     stmt = select(Merchant).where(Merchant.owner_id == actor.owner_id)
     if query:
@@ -1194,7 +1208,7 @@ def merchants_list(
 def merchants_create(
     data: MerchantCreate,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     if data.place_ref and not data.place_ref.startswith("shadow://travel/"):
@@ -1227,7 +1241,7 @@ def merchants_create(
 
 @router.get("/merchants/{merchant_id}")
 def merchants_get(
-    merchant_id: uuid.UUID, actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
+    merchant_id: uuid.UUID, actor: Actor = Depends(user_actor), db: Session = Depends(get_db)
 ):
     row = owned(db, Merchant, merchant_id, actor.owner_id, "merchant")
     aliases = db.scalars(select(MerchantAlias).where(MerchantAlias.merchant_id == row.id))
@@ -1246,7 +1260,7 @@ def merchants_patch(
     merchant_id: uuid.UUID,
     data: MerchantCreate,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     if actor.actor_type != "user":
@@ -1266,7 +1280,7 @@ def merchant_alias(
     merchant_id: uuid.UUID,
     data: AliasCreate,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     if actor.actor_type != "user":
@@ -1284,7 +1298,7 @@ def merchant_merge(
     merchant_id: uuid.UUID,
     data: MergeCreate,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     if actor.actor_type != "user":
@@ -1299,7 +1313,7 @@ def merchant_merge(
 
 @router.get("/items")
 def items_list(
-    query: str | None = None, actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
+    query: str | None = None, actor: Actor = Depends(user_actor), db: Session = Depends(get_db)
 ):
     stmt = select(ItemIdentity).where(ItemIdentity.owner_id == actor.owner_id)
     if query:
@@ -1323,7 +1337,7 @@ def items_list(
 def items_create(
     data: ItemCreate,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     if data.merchant_id:
@@ -1371,7 +1385,7 @@ def items_create(
 
 @router.get("/items/{item_id}")
 def items_get(
-    item_id: uuid.UUID, actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
+    item_id: uuid.UUID, actor: Actor = Depends(user_actor), db: Session = Depends(get_db)
 ):
     row = owned(db, ItemIdentity, item_id, actor.owner_id, "item")
     aliases = db.scalars(select(ItemAlias).where(ItemAlias.item_identity_id == row.id))
@@ -1401,7 +1415,7 @@ def items_patch(
     item_id: uuid.UUID,
     data: ItemCreate,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     if actor.actor_type != "user":
@@ -1417,7 +1431,7 @@ def item_alias(
     item_id: uuid.UUID,
     data: AliasCreate,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     if actor.actor_type != "user":
@@ -1433,7 +1447,7 @@ def item_merge(
     item_id: uuid.UUID,
     data: MergeCreate,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     if actor.actor_type != "user":
@@ -1447,7 +1461,7 @@ def item_merge(
 
 
 @router.get("/identity-suggestions")
-def suggestions(actor: Actor = Depends(current_actor), db: Session = Depends(get_db)):
+def suggestions(actor: Actor = Depends(user_actor), db: Session = Depends(get_db)):
     rows = db.scalars(
         select(IdentitySuggestion).where(
             IdentitySuggestion.owner_id == actor.owner_id, IdentitySuggestion.state == "pending"
@@ -1466,7 +1480,7 @@ def suggestion_decide(
     suggestion_id: uuid.UUID,
     decision: str,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     if decision not in {"accept", "reject"}:
@@ -1500,7 +1514,7 @@ INTENT_FIELDS = (
 
 @router.get("/intents")
 def intents_list(
-    state: str | None = None, actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
+    state: str | None = None, actor: Actor = Depends(user_actor), db: Session = Depends(get_db)
 ):
     stmt = select(SpendingIntent).where(SpendingIntent.owner_id == actor.owner_id)
     if state:
@@ -1513,11 +1527,27 @@ def intents_list(
     }
 
 
+def validate_planning_identities(db, owner_id, data):
+    for field, model in (("merchant_id", Merchant), ("item_identity_id", ItemIdentity)):
+        value = getattr(data, field, None)
+        if value and not db.scalar(
+            select(model.id).where(model.id == value, model.owner_id == owner_id)
+        ):
+            raise AppError(422, "planning_identity_not_found", "计划只能关联本人的商家或商品")
+
+
+def planning_values(data):
+    return {
+        key: as_utc(value) if isinstance(value, datetime) else value
+        for key, value in data.model_dump().items()
+    }
+
+
 @router.post("/intents", status_code=201)
 def intents_create(
     data: IntentCreate,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     replay = replayed_create(
@@ -1525,7 +1555,8 @@ def intents_create(
     )
     if replay:
         return simple_model(replay, INTENT_FIELDS)
-    row = SpendingIntent(owner_id=actor.owner_id, **data.model_dump())
+    validate_planning_identities(db, actor.owner_id, data)
+    row = SpendingIntent(owner_id=actor.owner_id, **planning_values(data))
     db.add(row)
     db.flush()
     remember_create(db, actor, "intents.create", idempotency_key or "", data.model_dump(), row.id)
@@ -1535,7 +1566,7 @@ def intents_create(
 
 @router.get("/intents/{intent_id}")
 def intents_get(
-    intent_id: uuid.UUID, actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
+    intent_id: uuid.UUID, actor: Actor = Depends(user_actor), db: Session = Depends(get_db)
 ):
     return simple_model(
         owned(db, SpendingIntent, intent_id, actor.owner_id, "intent"), INTENT_FIELDS
@@ -1548,16 +1579,17 @@ def intents_patch(
     data: IntentCreate,
     response: Response,
     if_match: str | None = Header(default=None, alias="If-Match"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     row = owned_locked(db, SpendingIntent, intent_id, actor.owner_id, "intent")
     expected = parse_etag(if_match)
     if row.revision != expected:
         raise AppError(409, "revision_conflict", "计划已被更新")
-    if data.state == "completed":
-        raise AppError(422, "record_required", "完成计划必须关联已确认记录")
-    for key, value in data.model_dump().items():
+    if row.state == "completed":
+        raise AppError(409, "intent_completed", "已完成计划保留历史，不能重新打开")
+    validate_planning_identities(db, actor.owner_id, data)
+    for key, value in planning_values(data).items():
         setattr(row, key, value)
     row.revision += 1
     db.commit()
@@ -1570,7 +1602,7 @@ def intent_draft(
     intent_id: uuid.UUID,
     response: Response,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
@@ -1578,7 +1610,9 @@ def intent_draft(
     replay = idempotency_lookup(db, actor.owner_id, "intent.draft", idempotency_key, payload)
     if replay:
         return serialize_record(db, get_record(db, actor.owner_id, replay.resource_id))
-    row = owned(db, SpendingIntent, intent_id, actor.owner_id, "intent")
+    row = owned_locked(db, SpendingIntent, intent_id, actor.owner_id, "intent")
+    if row.state in {"completed", "cancelled", "skipped"}:
+        raise AppError(409, "intent_inactive", "该计划已结束，不能生成新草稿")
     money = None
     if row.expected_amount:
         money = MoneyEntryInput(
@@ -1614,13 +1648,15 @@ def intent_complete(
     intent_id: uuid.UUID,
     record_id: uuid.UUID,
     if_match: str | None = Header(default=None, alias="If-Match"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     row = owned_locked(db, SpendingIntent, intent_id, actor.owner_id, "intent")
     if row.revision != parse_etag(if_match):
         raise AppError(409, "revision_conflict", "计划已被更新")
-    record = get_record(db, actor.owner_id, record_id)
+    if row.state in {"completed", "cancelled", "skipped"}:
+        raise AppError(409, "intent_inactive", "已结束计划不能重新关联消费")
+    record = owned_locked(db, LedgerRecord, record_id, actor.owner_id, "record")
     if record.state != "confirmed":
         raise AppError(422, "confirmed_record_required", "只能关联已确认记录")
     row.state = "completed"
@@ -1661,7 +1697,7 @@ COMMITMENT_FIELDS = (
 
 
 @router.get("/recurring-commitments")
-def commitments_list(actor: Actor = Depends(current_actor), db: Session = Depends(get_db)):
+def commitments_list(actor: Actor = Depends(user_actor), db: Session = Depends(get_db)):
     rows = db.scalars(
         select(RecurringCommitment)
         .where(RecurringCommitment.owner_id == actor.owner_id)
@@ -1674,7 +1710,7 @@ def commitments_list(actor: Actor = Depends(current_actor), db: Session = Depend
 def commitments_create(
     data: CommitmentCreate,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     replay = replayed_create(
@@ -1688,7 +1724,8 @@ def commitments_create(
     )
     if replay:
         return simple_model(replay, COMMITMENT_FIELDS)
-    row = RecurringCommitment(owner_id=actor.owner_id, state="active", **data.model_dump())
+    validate_planning_identities(db, actor.owner_id, data)
+    row = RecurringCommitment(owner_id=actor.owner_id, state="active", **planning_values(data))
     db.add(row)
     db.flush()
     remember_create(
@@ -1700,7 +1737,7 @@ def commitments_create(
 
 @router.get("/recurring-commitments/{commitment_id}")
 def commitments_get(
-    commitment_id: uuid.UUID, actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
+    commitment_id: uuid.UUID, actor: Actor = Depends(user_actor), db: Session = Depends(get_db)
 ):
     return simple_model(
         owned(db, RecurringCommitment, commitment_id, actor.owner_id, "commitment"),
@@ -1715,7 +1752,7 @@ def commitments_patch(
     response: Response,
     state: str = "active",
     if_match: str | None = Header(default=None, alias="If-Match"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     row = owned_locked(db, RecurringCommitment, commitment_id, actor.owner_id, "commitment")
@@ -1723,7 +1760,8 @@ def commitments_patch(
         raise AppError(409, "revision_conflict", "周期事项已被更新")
     if state not in {"active", "paused", "ended"}:
         raise AppError(422, "invalid_state", "周期事项状态无效")
-    for key, value in data.model_dump().items():
+    validate_planning_identities(db, actor.owner_id, data)
+    for key, value in planning_values(data).items():
         setattr(row, key, value)
     row.state = state
     row.revision += 1
@@ -1740,9 +1778,20 @@ def recurring_money_type(kind: str) -> str:
 def commitment_draft(
     commitment_id: uuid.UUID,
     occurrence: datetime | None = None,
-    actor: Actor = Depends(current_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
+    payload = {
+        "commitment_id": str(commitment_id),
+        "occurrence": occurrence.isoformat() if occurrence else None,
+    }
+    if idempotency_key:
+        replay = idempotency_lookup(
+            db, actor.owner_id, "commitment.draft", idempotency_key, payload
+        )
+        if replay:
+            return serialize_record(db, get_record(db, actor.owner_id, replay.resource_id))
     row = owned_locked(db, RecurringCommitment, commitment_id, actor.owner_id, "commitment")
     if occurrence is not None and occurrence.tzinfo is None:
         raise AppError(422, "timezone_required", "周期发生时间必须包含时区")
@@ -1755,9 +1804,21 @@ def commitment_draft(
         select(Reminder).where(Reminder.owner_id == actor.owner_id, Reminder.reminder_key == key)
     )
     if existing and existing.payload.get("record_id"):
+        if idempotency_key:
+            idempotency_save(
+                db,
+                actor.owner_id,
+                "commitment.draft",
+                idempotency_key,
+                payload,
+                uuid.UUID(existing.payload["record_id"]),
+            )
+            db.commit()
         return serialize_record(
             db, get_record(db, actor.owner_id, uuid.UUID(existing.payload["record_id"]))
         )
+    if row.state != "active":
+        raise AppError(409, "commitment_inactive", "暂停或已结束的周期不能生成新草稿")
     reminder = existing or Reminder(
         owner_id=actor.owner_id,
         reminder_key=key,
@@ -1781,15 +1842,20 @@ def commitment_draft(
         ),
     )
     record = create_record(db, actor.owner_id, data, key, actor_id(actor), commit=False)
-    reminder.payload = {"record_id": str(record.id)}
+    reminder.payload = {**(reminder.payload or {}), "title": row.title, "record_id": str(record.id)}
     reminder.state = "handled"
     row.last_record_id = record.id
+    row.revision += 1
+    if idempotency_key:
+        idempotency_save(
+            db, actor.owner_id, "commitment.draft", idempotency_key, payload, record.id
+        )
     db.commit()
     return serialize_record(db, record)
 
 
 @router.get("/reminders")
-def reminders_list(actor: Actor = Depends(current_actor), db: Session = Depends(get_db)):
+def reminders_list(actor: Actor = Depends(user_actor), db: Session = Depends(get_db)):
     rows = db.scalars(
         select(Reminder).where(Reminder.owner_id == actor.owner_id).order_by(Reminder.due_at)
     )
@@ -1808,7 +1874,7 @@ def reminders_list(actor: Actor = Depends(current_actor), db: Session = Depends(
 def reminder_action(
     reminder_id: uuid.UUID,
     action: str,
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     states = {"read": "read", "dismiss": "dismissed"}
@@ -2099,7 +2165,7 @@ BUDGET_FIELDS = (
 
 @router.get("/budget-targets")
 def budgets_list(
-    month: date | None = None, actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
+    month: date | None = None, actor: Actor = Depends(user_actor), db: Session = Depends(get_db)
 ):
     stmt = select(BudgetTarget).where(BudgetTarget.owner_id == actor.owner_id)
     if month:
@@ -2111,7 +2177,7 @@ def budgets_list(
 def budgets_create(
     data: BudgetCreate,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     if data.category_id:
@@ -2137,7 +2203,7 @@ def budgets_create(
 
 @router.get("/budget-targets/{budget_id}")
 def budgets_get(
-    budget_id: uuid.UUID, actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
+    budget_id: uuid.UUID, actor: Actor = Depends(user_actor), db: Session = Depends(get_db)
 ):
     return simple_model(owned(db, BudgetTarget, budget_id, actor.owner_id, "budget"), BUDGET_FIELDS)
 
@@ -2149,7 +2215,7 @@ def budgets_patch(
     response: Response,
     active: bool = True,
     if_match: str | None = Header(default=None, alias="If-Match"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     row = owned(db, BudgetTarget, budget_id, actor.owner_id, "budget")
@@ -2164,28 +2230,31 @@ def budgets_patch(
     return simple_model(row, BUDGET_FIELDS)
 
 
-def month_range(month: str | None) -> tuple[datetime, datetime]:
+def month_range(month: str | None, timezone: str | None = None) -> tuple[datetime, datetime]:
     try:
+        zone = ZoneInfo(timezone or get_settings().default_timezone)
         start_date = (
-            datetime.strptime(month, "%Y-%m")
+            datetime.strptime(month, "%Y-%m").replace(tzinfo=zone)
             if month
-            else datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            else datetime.now(zone).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         )
-        if start_date.tzinfo is None:
-            start_date = start_date.replace(tzinfo=UTC)
-    except ValueError as exc:
-        raise AppError(400, "invalid_month", "月份格式应为 YYYY-MM") from exc
-    return start_date, start_date + relativedelta(months=1)
+        end = start_date + relativedelta(months=1)
+    except (ValueError, KeyError, OverflowError) as exc:
+        raise AppError(
+            400, "invalid_month", "月份格式应为 YYYY-MM，时区应为有效 IANA 名称"
+        ) from exc
+    return start_date.astimezone(UTC), end.astimezone(UTC)
 
 
 @router.get("/insights/summary")
 def insight_summary(
     month: str | None = None,
     currency: str = "CNY",
-    actor: Actor = Depends(current_actor),
+    timezone: str | None = None,
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
-    start, end = month_range(month)
+    start, end = month_range(month, timezone)
     sums = db.execute(
         select(
             func.coalesce(
@@ -2226,10 +2295,11 @@ def insight_summary(
 def insight_categories(
     month: str | None = None,
     currency: str = "CNY",
-    actor: Actor = Depends(current_actor),
+    timezone: str | None = None,
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
-    start, end = month_range(month)
+    start, end = month_range(month, timezone)
     rows = db.execute(
         select(
             MoneyCategory.key,
@@ -2265,17 +2335,22 @@ def insight_categories(
 
 @router.get("/insights/scenes")
 def insight_scenes(
-    month: str | None = None, actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
+    month: str | None = None,
+    timezone: str | None = None,
+    actor: Actor = Depends(user_actor),
+    db: Session = Depends(get_db),
 ):
-    start, end = month_range(month)
+    start, end = month_range(month, timezone)
     rows = db.execute(
         select(ConsumptionEvent.scene, func.count())
         .join(LedgerRecord, ConsumptionEvent.record_id == LedgerRecord.id)
+        .outerjoin(MoneyEntry, MoneyEntry.record_id == LedgerRecord.id)
         .where(
             LedgerRecord.owner_id == actor.owner_id,
             LedgerRecord.state == "confirmed",
             LedgerRecord.occurred_at >= start,
             LedgerRecord.occurred_at < end,
+            (MoneyEntry.type == "expense") | MoneyEntry.id.is_(None),
         )
         .group_by(ConsumptionEvent.scene)
     ).all()
@@ -2288,23 +2363,33 @@ def insight_scenes(
 
 
 @router.get("/insights/merchants")
-def insight_merchants(actor: Actor = Depends(current_actor), db: Session = Depends(get_db)):
+def insight_merchants(
+    currency: str = "CNY", actor: Actor = Depends(user_actor), db: Session = Depends(get_db)
+):
     rows = db.execute(
         select(
             ConsumptionEvent.merchant_id,
             ConsumptionEvent.merchant_name_raw,
-            func.count(),
-            func.sum(MoneyEntry.amount),
+            func.sum(case(((MoneyEntry.type == "expense") | MoneyEntry.id.is_(None), 1), else_=0)),
+            func.sum(
+                case((MoneyEntry.type == "refund", -MoneyEntry.amount), else_=MoneyEntry.amount)
+            ),
         )
         .join(LedgerRecord, ConsumptionEvent.record_id == LedgerRecord.id)
         .outerjoin(MoneyEntry, ConsumptionEvent.money_entry_id == MoneyEntry.id)
-        .where(LedgerRecord.owner_id == actor.owner_id, LedgerRecord.state == "confirmed")
+        .where(
+            LedgerRecord.owner_id == actor.owner_id,
+            LedgerRecord.state == "confirmed",
+            (MoneyEntry.currency == currency.upper()) | MoneyEntry.id.is_(None),
+            MoneyEntry.type.in_(["expense", "refund"]) | MoneyEntry.id.is_(None),
+        )
         .group_by(ConsumptionEvent.merchant_id, ConsumptionEvent.merchant_name_raw)
         .order_by(func.count().desc())
         .limit(50)
     ).all()
     return jsonable(
         {
+            "currency": currency.upper(),
             "items": [
                 {
                     "merchant_id": merchant_id,
@@ -2313,25 +2398,30 @@ def insight_merchants(actor: Actor = Depends(current_actor), db: Session = Depen
                     "amount": amount,
                 }
                 for merchant_id, name, count, amount in rows
-            ]
+            ],
         }
     )
 
 
 @router.get("/insights/items")
-def insight_items(actor: Actor = Depends(current_actor), db: Session = Depends(get_db)):
+def insight_items(actor: Actor = Depends(user_actor), db: Session = Depends(get_db)):
     rows = db.execute(
         select(
             ConsumptionLine.item_identity_id,
             ConsumptionLine.raw_name,
-            func.count(),
+            func.count(LedgerRecord.id.distinct()),
             func.max(LedgerRecord.occurred_at),
             func.min(LedgerRecord.occurred_at),
         )
         .select_from(ConsumptionLine)
         .join(ConsumptionEvent, ConsumptionLine.event_id == ConsumptionEvent.id)
         .join(LedgerRecord, ConsumptionEvent.record_id == LedgerRecord.id)
-        .where(LedgerRecord.owner_id == actor.owner_id, LedgerRecord.state == "confirmed")
+        .outerjoin(MoneyEntry, MoneyEntry.record_id == LedgerRecord.id)
+        .where(
+            LedgerRecord.owner_id == actor.owner_id,
+            LedgerRecord.state == "confirmed",
+            (MoneyEntry.type == "expense") | MoneyEntry.id.is_(None),
+        )
         .group_by(ConsumptionLine.item_identity_id, ConsumptionLine.raw_name)
         .order_by(func.count().desc())
         .limit(50)
@@ -2354,13 +2444,17 @@ def insight_items(actor: Actor = Depends(current_actor), db: Session = Depends(g
 
 @router.get("/insights/budgets")
 def insight_budgets(
-    month: str, actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
+    month: str,
+    timezone: str | None = None,
+    actor: Actor = Depends(user_actor),
+    db: Session = Depends(get_db),
 ):
-    start, end = month_range(month)
+    start, end = month_range(month, timezone)
+    budget_month = start.astimezone(ZoneInfo(timezone or get_settings().default_timezone)).date()
     targets = db.scalars(
         select(BudgetTarget).where(
             BudgetTarget.owner_id == actor.owner_id,
-            BudgetTarget.budget_month == start.date(),
+            BudgetTarget.budget_month == budget_month,
             BudgetTarget.active.is_(True),
         )
     )
@@ -2444,7 +2538,7 @@ def references_create(
 
 @router.get("/records/{record_id}/references")
 def references_list(
-    record_id: uuid.UUID, actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
+    record_id: uuid.UUID, actor: Actor = Depends(user_actor), db: Session = Depends(get_db)
 ):
     get_record(db, actor.owner_id, record_id)
     rows = db.scalars(
@@ -2463,7 +2557,7 @@ def references_list(
 def references_delete(
     record_id: uuid.UUID,
     reference_id: uuid.UUID,
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     row = owned(db, ExternalReference, reference_id, actor.owner_id, "reference")
@@ -2557,7 +2651,7 @@ def archive_evidence_create(
 @router.get("/records/{record_id}/archive-evidence")
 def archive_evidence_list(
     record_id: uuid.UUID,
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     get_record(db, actor.owner_id, record_id)
@@ -2594,7 +2688,7 @@ def archive_evidence_release(
     actor: Actor = Depends(require_scope("ledger.integrations")),
     db: Session = Depends(get_db),
 ):
-    row = owned(db, ArchiveEvidenceLink, link_id, actor.owner_id, "archive_evidence")
+    row = owned_locked(db, ArchiveEvidenceLink, link_id, actor.owner_id, "archive_evidence")
     if row.record_id != record_id:
         raise AppError(404, "archive_evidence_not_found", "Archive 凭证引用不存在")
     if row.revision != data.revision:
@@ -2634,7 +2728,7 @@ def archive_evidence_release(
 def export_create(
     format: str = "json",
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    actor: Actor = Depends(current_actor),
+    actor: Actor = Depends(user_actor),
     db: Session = Depends(get_db),
 ):
     if format not in {"json", "csv"}:
@@ -2660,7 +2754,7 @@ def export_create(
 
 @router.get("/exports/{export_id}")
 def export_get(
-    export_id: uuid.UUID, actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
+    export_id: uuid.UUID, actor: Actor = Depends(user_actor), db: Session = Depends(get_db)
 ):
     job = db.get(BackgroundJob, export_id)
     if job is None or job.job_type != "export" or job.payload.get("owner_id") != actor.owner_id:

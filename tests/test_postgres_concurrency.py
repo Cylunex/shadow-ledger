@@ -43,21 +43,45 @@ def race(actions):
 def test_postgres_agent_grant_consumed_once(postgres):
     from app.models import AgentExecutionReceipt, LedgerAgentGrant
     from app.services.agent_effects import approve, execute, request_review
-    body = RecordCreate.model_validate({"occurred_at": "2026-09-04T10:00:00+08:00",
-        "money_entry": {"type": "expense", "amount": "32.00", "currency": "CNY"}})
+
+    body = RecordCreate.model_validate(
+        {
+            "occurred_at": "2026-09-04T10:00:00+08:00",
+            "money_entry": {"type": "expense", "amount": "32.00", "currency": "CNY"},
+        }
+    )
     with database.SessionLocal() as db:
-        db.add(LedgerAgentGrant(agent_id="agent-test", owner_id="alice", granted_by="alice", allow_confirm=True))
+        db.add(
+            LedgerAgentGrant(
+                agent_id="agent-test", owner_id="alice", granted_by="alice", allow_confirm=True
+            )
+        )
         db.commit()
-        row = create_record(db, "alice", body, "agent-concurrency-draft", "agent-test", actor_type="agent")
-        intent = request_review(db, "alice", "agent-test", row.id, 1, "confirm", "agent-concurrency-review")
-        grant_id = UUID(approve(db, "alice", intent.id, intent.args_hash, True)["approval_grant_id"])
+        row = create_record(
+            db, "alice", body, "agent-concurrency-draft", "agent-test", actor_type="agent"
+        )
+        intent = request_review(
+            db, "alice", "agent-test", row.id, 1, "confirm", "agent-concurrency-review"
+        )
+        grant_id = UUID(
+            approve(db, "alice", intent.id, intent.args_hash, True)["approval_grant_id"]
+        )
+
     def commit(db):
         return execute(db, "alice", "agent-test", grant_id)["receipt"]
+
     results = race([commit, commit])
     assert results[0] == results[1]
     with database.SessionLocal() as db:
         assert db.scalar(select(func.count()).select_from(AgentExecutionReceipt)) == 1
-        assert db.scalar(select(func.count()).select_from(OutboxEvent).where(OutboxEvent.event_type == "ledger.record.confirmed")) == 1
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(OutboxEvent)
+                .where(OutboxEvent.event_type == "ledger.record.confirmed")
+            )
+            == 1
+        )
 
 
 def test_postgres_create_same_key_has_one_fact(postgres):
@@ -131,3 +155,51 @@ def test_postgres_import_same_source_different_batches(postgres, write_headers):
         return run
 
     assert sorted(race([importer("batch-a"), importer("batch-b")])) == [0, 1]
+
+
+def test_postgres_add_amount_is_version_locked(postgres, write_headers):
+    from app.schemas import MoneyEntryInput
+    from app.services.records import add_money_entry
+
+    response = post(
+        postgres,
+        write_headers,
+        "/records",
+        {"occurred_at": "2026-09-04T10:00:00Z", "consumption": {"scene": "drink"}, "confirm": True},
+    )
+    row = response.json()
+
+    def add(db):
+        return add_money_entry(
+            db,
+            "alice",
+            UUID(row["id"]),
+            row["revision"],
+            MoneyEntryInput(type="expense", amount="12", currency="CNY"),
+            "alice",
+        ).state
+
+    assert sorted(race([add, add])) == ["confirmed", "revision_conflict"]
+
+
+def test_postgres_workers_do_not_duplicate_reminders(postgres):
+    from datetime import UTC, datetime, timedelta
+
+    from app.models import RecurringCommitment, Reminder
+    from app.worker import create_due_reminders
+
+    with database.SessionLocal.begin() as db:
+        db.add(
+            RecurringCommitment(
+                owner_id="alice",
+                title="并发提醒",
+                kind="subscription",
+                recurrence_rule="FREQ=MONTHLY",
+                timezone="Asia/Shanghai",
+                currency="CNY",
+                next_due_at=datetime.now(UTC) + timedelta(days=1),
+            )
+        )
+    assert sorted(race([create_due_reminders, create_due_reminders])) == [0, 1]
+    with database.SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(Reminder)) == 1

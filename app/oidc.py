@@ -124,10 +124,24 @@ def _claims(id_token: str, metadata: dict, settings: Settings) -> dict:
         jwks_response.raise_for_status()
         key_set = jwt.PyJWKSet.from_dict(jwks_response.json())
         header = jwt.get_unverified_header(id_token)
+        allowed_algorithms = {
+            "RS256",
+            "RS384",
+            "RS512",
+            "PS256",
+            "PS384",
+            "PS512",
+            "ES256",
+            "ES384",
+            "ES512",
+            "EdDSA",
+        }
+        if header.get("alg") not in allowed_algorithms:
+            raise AppError(401, "invalid_id_token", "ID Token 必须使用非对称签名")
         keys = [key.key for key in key_set.keys if key.key_id == header.get("kid")]
         if len(keys) != 1:
             raise AppError(401, "oidc_unknown_key", "ID Token 签名密钥无效")
-        return jwt.decode(
+        claims = jwt.decode(
             id_token,
             keys[0],
             algorithms=[header.get("alg")],
@@ -135,6 +149,15 @@ def _claims(id_token: str, metadata: dict, settings: Settings) -> dict:
             issuer=settings.oidc_issuer,
             options={"require": ["exp", "iat", "iss", "aud", "sub", "nonce"]},
         )
+        audience = claims["aud"]
+        authorized_party = claims.get("azp")
+        if (
+            isinstance(audience, list)
+            and len(audience) > 1
+            and authorized_party != settings.oidc_client_id
+        ) or (authorized_party is not None and authorized_party != settings.oidc_client_id):
+            raise AppError(401, "invalid_id_token", "ID Token 授权客户端不匹配")
+        return claims
     except AppError:
         raise
     except (httpx.HTTPError, ValueError, KeyError, jwt.PyJWTError) as exc:

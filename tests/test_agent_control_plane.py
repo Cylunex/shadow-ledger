@@ -273,6 +273,7 @@ def test_metrics_partial_currency_scope_and_claim_grounding(agent_app_factory):
         ("订单12345", False),
         ("午餐 USD32", False),
         ("购物1,032元", False),
+        ("购物123456789012345元", False),
     ],
 )
 def test_capture_verifier_is_deterministic(agent_app_factory, text, ready):

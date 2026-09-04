@@ -41,7 +41,7 @@ const cookie = (name) =>
 export async function api(path, options = {}) {
   const method = options.method || "GET";
   const mutation = !["GET", "HEAD"].includes(method);
-  const signature = `${method}:${path}:${options.headers?.["If-Match"] || ""}:${options.body || ""}`;
+  const signature = `${method}:${path}:${options.headers?.["If-Match"] || ""}:${options.headers?.["Idempotency-Key"] || ""}:${options.body || ""}`;
   if (mutation && inFlight.has(signature)) return inFlight.get(signature);
   const run = async () => {
     const headers = { Accept: "application/json", ...options.headers };
@@ -85,8 +85,10 @@ export async function api(path, options = {}) {
       error.code = data.error?.code;
       throw error;
     }
+    // A truncated success body is still an uncertain write: preserve its retry key.
+    const result = response.status === 204 ? null : await response.json();
     pendingKeys.delete(signature);
-    return response.status === 204 ? null : response.json();
+    return result;
   };
   const promise = run();
   if (mutation) inFlight.set(signature, promise);
@@ -115,14 +117,26 @@ export function money(value, currency = "CNY") {
 
 export function sumAmounts(values) {
   const total = values.reduce((sum, value) => {
-    const [whole, fraction = ""] = String(value).split(".");
-    return sum + BigInt(whole) * 10000n + BigInt(fraction.padEnd(4, "0"));
+    const match = String(value).match(/^(-?)(\d+)(?:\.(\d{1,4}))?$/);
+    if (!match) throw new Error("金额格式错误");
+    const units =
+      BigInt(match[2]) * 10000n + BigInt((match[3] || "").padEnd(4, "0"));
+    return sum + (match[1] ? -units : units);
   }, 0n);
-  return `${total / 10000n}.${String(total % 10000n).padStart(4, "0")}`;
+  const absolute = total < 0n ? -total : total;
+  return `${total < 0n ? "-" : ""}${absolute / 10000n}.${String(absolute % 10000n).padStart(4, "0")}`;
 }
 
 export const dateValue = (value) =>
   new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : `${value}Z`);
+export function monthInTimezone(timezone, value = new Date()) {
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(value);
+  return `${parts.find((p) => p.type === "year").value}-${parts.find((p) => p.type === "month").value}`;
+}
 export function localDateTime(value) {
   const date = dateValue(value);
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000)

@@ -17,12 +17,17 @@ def prefixed(request: Request, path: str) -> str:
     return f"{external_prefix(request)}{path}"
 
 
-def is_lan_bypass(request: Request, expected_prefix: str = "/ledger") -> bool:
+def is_lan_bypass(request: Request, expected_prefix: str = "/ledger", *, settings=None) -> bool:
     if request.headers.get("X-Shadow-Lan-Bypass", "") != "1":
         return False
     if external_prefix(request) != expected_prefix:
         return False
     host = urlsplit(f"//{request.headers.get('Host', '')}").hostname or ""
+    settings = settings or getattr(
+        getattr(request.scope.get("app"), "state", None), "settings", None
+    )
+    if settings is None or host not in settings.lan_bypass_hosts:
+        return False
     try:
         ipaddress.ip_address(host)
     except ValueError:

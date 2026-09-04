@@ -87,3 +87,6 @@ app/cli/                    wheel 可用的迁移与运行证据命令
 审批，`app/routers/agent_control.py` 区分机器和用户会话，`app/agent_mcp.py` 是官方 SDK 适配器。
 旧 Nexus commit/reject 必须携带用户批准后签发的 approval_grant_id，否则 428；不能为兼容旧 Host
 恢复长期 allow_confirm 直接入账。远程 MCP 默认关闭，OAuth/生产 Host/NAS 联调不属于本地验收。
+
+后续维护同时参考 [全功能逻辑走查](logic-walkthrough-2026-09.md)：包含时区/币种口径、服务权限、
+周期 occurrence 幂等、版本推进与前端重试修正，以及本地和生产验收边界。

@@ -1,4 +1,14 @@
-import { $, $$, api, escapeHtml, money, showError, busy } from "./core.js";
+import {
+  $,
+  $$,
+  api,
+  escapeHtml,
+  money,
+  showError,
+  busy,
+  currentUser,
+  monthInTimezone,
+} from "./core.js";
 let latestRun = null;
 const states = {
   active: "待考虑",
@@ -98,10 +108,17 @@ export function initInsights() {
   loadInsights().catch(showError);
 }
 async function loadInsights() {
+  const timezone = currentUser?.timezone || "Asia/Shanghai";
+  const month = monthInTimezone(timezone);
+  const query = new URLSearchParams({
+    month,
+    timezone,
+    currency: currentUser?.default_currency || "CNY",
+  });
   const [summary, scenes, budgets, quality] = await Promise.all([
-    api("/insights/summary"),
-    api("/insights/scenes"),
-    api(`/insights/budgets?month=${new Date().toISOString().slice(0, 7)}`),
+    api(`/insights/summary?${query}`),
+    api(`/insights/scenes?${query}`),
+    api(`/insights/budgets?${query}`),
     api("/insights/data-quality"),
   ]);
   $("#insight-summary").innerHTML = [

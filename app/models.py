@@ -10,7 +10,6 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
-    DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -26,6 +25,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
+from app.db import UTCDateTime as DateTime
 
 
 def new_id() -> uuid.UUID:
@@ -543,7 +543,10 @@ class AgentIntent(Timestamps, Base):
     __table_args__ = (
         UniqueConstraint("owner_id", "agent_id", "request_key", name="uq_agent_intent_request"),
         CheckConstraint("action IN ('confirm','reject')", name="ck_agent_intent_action"),
-        CheckConstraint("state IN ('awaiting_human','approved','rejected','executed')", name="ck_agent_intent_state"),
+        CheckConstraint(
+            "state IN ('awaiting_human','approved','rejected','executed')",
+            name="ck_agent_intent_state",
+        ),
         Index("idx_agent_intent_queue", "owner_id", "state", "created_at"),
     )
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
@@ -848,9 +851,13 @@ class SuggestionFeedback(Timestamps, Base):
     __tablename__ = "suggestion_feedback"
     __table_args__ = (
         UniqueConstraint("owner_id", "episode_key", name="uq_feedback_episode"),
-        CheckConstraint("state IN ('dismissed','snoozed','handled','active')", name="ck_feedback_state"),
+        CheckConstraint(
+            "state IN ('dismissed','snoozed','handled','active')", name="ck_feedback_state"
+        ),
         CheckConstraint("revision > 0", name="ck_feedback_revision"),
-        CheckConstraint("state <> 'snoozed' OR snoozed_until IS NOT NULL", name="ck_feedback_snooze"),
+        CheckConstraint(
+            "state <> 'snoozed' OR snoozed_until IS NOT NULL", name="ck_feedback_snooze"
+        ),
     )
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
     owner_id: Mapped[str] = mapped_column(Text)
@@ -866,7 +873,9 @@ class SourceObservation(Timestamps, Base):
     __tablename__ = "source_observations"
     __table_args__ = (
         UniqueConstraint("source_id", "external_revision", name="uq_observation_version"),
-        CheckConstraint("state IN ('baseline','pending','kept','applied')", name="ck_observation_state"),
+        CheckConstraint(
+            "state IN ('baseline','pending','kept','applied')", name="ck_observation_state"
+        ),
         CheckConstraint("revision > 0", name="ck_observation_revision"),
         Index("idx_observation_owner_state", "owner_id", "state", "created_at", "id"),
     )
