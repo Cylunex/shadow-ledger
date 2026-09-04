@@ -359,3 +359,15 @@ ForecastItem
 
 `ArchiveEvidenceLink` 连接 Record、已有 AssetBinding 和 `shadow://archive/...` URI。表中不保存文件
 字节、下载地址或服务凭据；释放链接不删除 Asset。
+## ADR 0009 增量
+
+SourceObservation 从属于 CaptureSource，按 (source_id, external_revision) 唯一。
+内容、候选、哈希、解析版本与字段定位追加保存；仅复核决定与 revision 可变。
+初始 CaptureSource 不覆盖，pending → kept/applied 都需显式用户决定。
+
+SuggestionFeedback 按 (owner_id, episode_key) 唯一，状态为 active/dismissed/snoozed/handled，
+具有 revision 与可选 snoozed_until。它不属于 ForecastRun，不改变计算结果哈希；
+复购的新实际购买、周期的新到期、使用的新周期才形成新事件。旧 ForecastItem 状态保留兼容。
+Record 仍是唯一事实状态根，观察和反馈都不是 MoneyEntry，不参与金额统计。
+
+完整语义和未知金额规则见 [优化实现](optimization-implementation.md)。

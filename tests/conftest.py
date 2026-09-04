@@ -20,11 +20,21 @@ from app.db import Base
 from app.main import create_app
 
 
+def test_database_url():
+    url = os.environ.get("LEDGER_TEST_POSTGRES_URL", "sqlite+pysqlite:///:memory:")
+    if url.startswith("postgresql"):
+        from sqlalchemy.engine import make_url
+
+        if not (make_url(url).database or "").startswith("ledger_test_"):
+            raise RuntimeError("PostgreSQL tests require an isolated ledger_test_* database")
+    return url
+
+
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
         env="test",
-        database_url="sqlite+pysqlite:///:memory:",
+        database_url=test_database_url(),
         oidc_issuer="https://identity.example.invalid",
         oidc_client_id="shadow-ledger",
         oidc_client_secret="test-oidc-secret",
@@ -37,7 +47,7 @@ def settings() -> Settings:
 
 @pytest.fixture
 def client(settings: Settings):
-    url = "sqlite+pysqlite:///:memory:"
+    url = test_database_url()
     app = create_app(settings, url)
     with TestClient(app, base_url="https://testserver") as test_client:
         from app import db

@@ -118,10 +118,12 @@ def mcp_forecasts(owner_id: str, limit: int) -> dict[str, Any]:
             return {"run": None, "items": []}
         rows = session.scalars(
             select(ForecastItem)
-            .where(ForecastItem.run_id == run.id, ForecastItem.state == "active")
+            .where(ForecastItem.run_id == run.id)
             .order_by(ForecastItem.predicted_at, ForecastItem.source_key)
-            .limit(limit)
-        )
+        ).all()
+        from app.services.feedback import effective_feedback, feedback_map
+        decisions = feedback_map(session, owner_id, rows)
+        rows = [row for row in rows if effective_feedback(row, decisions)["state"] == "active"][:limit]
         items = [
             jsonable(
                 {

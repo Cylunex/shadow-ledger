@@ -19,7 +19,9 @@ Shadow Ledger 是以消费为中心的个人收支记录与规划系统。它同
 - 显式使用周期，以及可解释、可回算的周期/复购预测；
 - CSV/JSON 导入导出，京东、淘宝、美团、饿了么 Markdown 账单导入；
 - Asset 附件、解析草稿与来源级幂等去重；
-- 导入复核工作台、可撤销商家规范化规则与数据完整度；
+- 统一待处理、部分退款候选、来源原文对照／版本观察与可撤销商家规则；
+- 显式选中批量确认、URL 筛选、跨运行建议反馈与消费记忆；
+- 可选 7 天本机文本草稿队列（只同步草稿，不离线确认）；
 - 通过稳定引用把消费凭证交给 Archive，不复制文件；
 - OIDC、审计、Outbox 和后台 Worker。
 - 只读优先的 stdio MCP，以及只创建草稿的结构化 Webhook/受控目录抓单。
@@ -54,3 +56,4 @@ MCP 与自动抓单的配置和安全边界见
 - [MCP 与自动抓单](docs/mcp-and-intake.md)
 - [通用运行说明](docs/operations.md)
 - [消费事实导入复核与运行证据](docs/import-review-and-evidence.md)
+- [1.2 消费闭环优化与验收范围](docs/optimization-implementation.md)

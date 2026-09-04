@@ -558,3 +558,36 @@ CREATE TABLE forecast_items (
 -- 4. state transitions are draft -> confirmed -> voided only;
 -- 5. confirmed/voided timestamps and revision increments are atomic;
 -- 6. completing an Intent and linking its Record happen in one transaction.
+-- ADR 0009 additive structures (0007).
+CREATE TABLE source_observations (
+    id UUID PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    source_id UUID NOT NULL REFERENCES capture_sources(id),
+    external_revision VARCHAR(200) NOT NULL,
+    raw_hash BYTEA NOT NULL,
+    payload JSON NOT NULL,
+    candidate JSON,
+    field_evidence JSON NOT NULL,
+    parser VARCHAR(80) NOT NULL,
+    parser_version VARCHAR(40) NOT NULL,
+    schema_version VARCHAR(20) NOT NULL,
+    state VARCHAR(20) NOT NULL CHECK (state IN ('baseline','pending','kept','applied')),
+    resolution JSON NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (source_id, external_revision)
+);
+CREATE INDEX idx_observation_owner_state ON source_observations(owner_id, state, created_at, id);
+CREATE TABLE suggestion_feedback (
+    id UUID PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    episode_key VARCHAR(64) NOT NULL,
+    state VARCHAR(20) NOT NULL CHECK (state IN ('active','dismissed','snoozed','handled')),
+    snoozed_until TIMESTAMPTZ,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (owner_id, episode_key),
+    CHECK (state <> 'snoozed' OR snoozed_until IS NOT NULL)
+);

@@ -24,8 +24,8 @@ app/mcp_server.py          官方 SDK stdio MCP
 shadow-plugin.yaml          运行时无关插件 Definition
 migrations/                 Alembic 历史
 scripts/                    observed evidence 与隔离恢复验证入口
-tests/                      领域、HTTP、安全和 OIDC 测试
-deploy/                     脱敏部署模板
+tests/                      领域、HTTP、安全、OIDC、PostgreSQL 并发与前端测试
+app/cli/                    wheel 可用的迁移与运行证据命令
 ```
 
 本地开发、验证和生产操作见仓库根 README 与 [`operations.md`](operations.md)。
@@ -67,5 +67,15 @@ deploy/                     脱敏部署模板
 3. 接入生产备份、指标抓取和告警；
 4. 以确定性 Forecast 作为基线积累回测数据，不提前引入机器学习或自动确认。
 
-当前还增加了显式 UseCycle、可回算 Forecast、stdio MCP 与通用 intake。生产启用前需执行 0005
-迁移，并在仓库外提供 MCP/intake owner 文件和最小权限运行配置。
+当前版本为 1.2.0，迁移头为 0007。生产升级前执行最新迁移，并在仓库外提供 MCP/intake owner
+文件和最小权限配置，不允许从早期 0005 状态直接启动新应用。
+
+## 6. 消费工作台优化（ADR 0009）
+
+实现、操作入口、格式范围、反馈语义与验收边界见
+[optimization-implementation.md](optimization-implementation.md)。修改这一部分前同时阅读
+[ADR 0009](decisions/0009-consumption-workbench.md)。
+
+新增来源观察、跨运行反馈、统一待处理、部分退款候选、显式批量选中、消费记忆、建议回看、
+文本本机队列与模块化前端。旧 Record/URI 和金额不迁移重写。本地隔离 PostgreSQL 已做迁移／并发
+验收；NAS 实际发布／恢复与支付宝、微信实际导出样本仍是外部验收门槛。

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.errors import AppError
-from app.importers import PARSER_VERSION, ParsedImport, parse_markdown_import
+from app.importers import PARSER_VERSION, ParsedImport
 from app.integrations import AssetClient
 from app.models import (
     ArchiveEvidenceLink,
@@ -83,16 +83,17 @@ from app.schemas import (
     jsonable,
 )
 from app.security import Actor, current_actor, require_scope
+from app.services.feedback import decorate_run, save_feedback
 from app.services.forecast import generate_forecast, serialize_run, verify_run
 from app.services.import_review import (
     amount_anomaly_reason,
     apply_normalization_rule,
-    normalize_merchant,
     quality_metrics,
     refund_candidate,
     serialize_review_item,
 )
 from app.services.intake import ingest_structured
+from app.services.payment_imports import parse_text_import
 from app.services.records import (
     add_money_entry,
     confirm_record,
@@ -103,6 +104,7 @@ from app.services.records import (
     idempotency_lookup,
     idempotency_save,
     list_records,
+    lock_command,
     parse_etag,
     patch_record,
     request_hash,
@@ -134,6 +136,18 @@ def owned(db: Session, model, resource_id: uuid.UUID, owner_id: str, name: str):
 
 def simple_model(row, fields: tuple[str, ...]) -> dict[str, Any]:
     return jsonable({field: getattr(row, field) for field in fields})
+
+
+def owned_locked(db, model, resource_id, owner_id, name):
+    row = db.scalar(
+        select(model)
+        .where(model.id == resource_id, model.owner_id == owner_id)
+        .with_for_update(of=model)
+        .execution_options(populate_existing=True)
+    )
+    if row is None:
+        raise AppError(404, f"{name}_not_found", "资源不存在")
+    return row
 
 
 def replayed_create(
@@ -350,9 +364,8 @@ DEFAULT_CATEGORIES = (
 
 
 def ensure_categories(db: Session, owner_id: str) -> None:
-    existing = set(
-        db.scalars(select(MoneyCategory.key).where(MoneyCategory.owner_id == owner_id))
-    )
+    lock_command(db, owner_id, "categories.seed", "defaults")
+    existing = set(db.scalars(select(MoneyCategory.key).where(MoneyCategory.owner_id == owner_id)))
     added = False
     for order, (key, name) in enumerate(DEFAULT_CATEGORIES):
         if key not in existing:
@@ -498,6 +511,7 @@ def capture_text(
         record = get_record(db, actor.owner_id, existing.resource_id)
         return serialize_record(db, record)
     if data.external_id:
+        lock_command(db, actor.owner_id, "source.text", data.external_id)
         source = db.scalar(
             select(CaptureSource).where(
                 CaptureSource.owner_id == actor.owner_id,
@@ -524,8 +538,24 @@ def capture_text(
     )
     db.add(source)
     db.flush()
-    record = create_record(db, actor.owner_id, candidate, idempotency_key or "", actor_id(actor))
+    record = create_record(
+        db,
+        actor.owner_id,
+        candidate,
+        f"capture:{request_hash(idempotency_key).hex()}",
+        actor_id(actor),
+        actor_type=actor.actor_type,
+        commit=False,
+    )
     db.add(LedgerRecordSource(record_id=record.id, source_id=source.id, role="capture"))
+    from app.services.intake_reviews import register_intake_reviews
+    from app.services.sources import ensure_baseline
+
+    ensure_baseline(db, source)
+    register_intake_reviews(db, actor.owner_id, source, [record], [candidate])
+    idempotency_save(
+        db, actor.owner_id, "capture.text", idempotency_key, data.model_dump(), record.id
+    )
     db.commit()
     return serialize_record(db, get_record(db, actor.owner_id, record.id))
 
@@ -552,22 +582,34 @@ def capture_source_get(
 
 @router.post("/capture-sources/{source_id}/retry")
 def capture_source_retry(
-    source_id: uuid.UUID, actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
+    source_id: uuid.UUID,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    actor: Actor = Depends(require_scope("ledger.capture")),
+    db: Session = Depends(get_db),
 ):
+    payload = {"source_id": str(source_id)}
+    replay = idempotency_lookup(db, actor.owner_id, "capture.retry", idempotency_key, payload)
+    if replay:
+        return {"status": "queued", "replayed": True}
     row = owned(db, CaptureSource, source_id, actor.owner_id, "capture_source")
-    if row.capture_state == "processing":
-        raise AppError(409, "capture_processing", "来源正在处理中")
+    row = db.scalar(select(CaptureSource).where(CaptureSource.id == row.id).with_for_update())
+    if row.capture_state != "failed":
+        raise AppError(409, "capture_not_failed", "仅可重试失败的采集来源")
+    row.capture_state = "received"
+    row.error_code = None
     job = BackgroundJob(
         job_type="capture.parse",
-        idempotency_key=f"capture:{row.id}:retry:{row.parser_version or '1'}",
+        idempotency_key=f"capture:{row.id}:retry:{idempotency_key}",
         payload={"source_id": str(row.id)},
         state="pending",
     )
     db.add(job)
+    idempotency_save(db, actor.owner_id, "capture.retry", idempotency_key, payload, row.id)
     try:
         db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
+        raise AppError(409, "capture_retry_conflict", "重试请求发生冲突，请刷新状态") from exc
     return {"status": "queued"}
 
 
@@ -659,9 +701,9 @@ def asset_complete(
 
 @router.post("/imports/preview")
 def imports_preview(data: ImportPreview, actor: Actor = Depends(current_actor)):
-    if data.format == "markdown":
+    if data.format in {"markdown", "csv"}:
         try:
-            parsed = parse_markdown_import(data.content)
+            parsed = parse_text_import(data.content, data.format)
         except ValueError as exc:
             raise AppError(422, "invalid_import", str(exc)) from exc
         return {
@@ -701,9 +743,7 @@ def imports_preview(data: ImportPreview, actor: Actor = Depends(current_actor)):
 
 
 def _existing_import_record_ids(db: Session, source_id: uuid.UUID) -> list[str]:
-    links = db.scalars(
-        select(LedgerRecordSource).where(LedgerRecordSource.source_id == source_id)
-    )
+    links = db.scalars(select(LedgerRecordSource).where(LedgerRecordSource.source_id == source_id))
     return [str(link.record_id) for link in links]
 
 
@@ -733,6 +773,7 @@ def _commit_markdown_import(
     db: Session, actor: Actor, parsed: ParsedImport, idempotency_key: str, payload: Any
 ) -> ImportBatch:
     digest = request_hash(payload)
+    lock_command(db, actor.owner_id, "import.batch", idempotency_key)
     existing_batch = db.scalar(
         select(ImportBatch).where(
             ImportBatch.owner_id == actor.owner_id,
@@ -777,6 +818,8 @@ def _commit_markdown_import(
             ) from exc
         return raced
     duplicate_count = 0
+    for source_key in sorted({candidate.source_external_id for candidate in parsed.candidates}):
+        lock_command(db, actor.owner_id, "source.import", source_key)
     for candidate in parsed.candidates:
         existing = db.scalar(
             select(CaptureSource).where(
@@ -786,10 +829,29 @@ def _commit_markdown_import(
             )
         )
         if existing:
+            from app.services.sources import append_observation, comparable_payload, ensure_baseline
+
+            ensure_baseline(db, existing)
+            if comparable_payload(existing.raw_payload) != comparable_payload(
+                candidate.raw_payload
+            ):
+                append_observation(
+                    db,
+                    existing,
+                    f"{PARSER_VERSION}:{request_hash(candidate.raw_payload).hex()}",
+                    candidate.raw_payload,
+                    candidate.record,
+                    parser=f"{parsed.platform}-markdown",
+                    parser_version=PARSER_VERSION,
+                )
             existing_ids = _existing_import_record_ids(db, existing.id)
             duplicate_count += 1
             if not existing_ids:
-                raise AppError(409, "orphan_import_source", "重复导入来源缺少关联记录")
+                raise AppError(
+                    409,
+                    "orphan_import_source",
+                    "此来源对应的草稿已删除，原始证据仍保留；不会通过重试重新录入",
+                )
             record_id = uuid.UUID(existing_ids[0])
             record = get_record(db, actor.owner_id, record_id)
             rule = None
@@ -809,9 +871,12 @@ def _commit_markdown_import(
             )
             db.add(source)
             db.flush()
+            from app.services.sources import ensure_baseline
+
+            ensure_baseline(db, source)
             normalized_record, rule = apply_normalization_rule(db, actor.owner_id, candidate)
             anomaly = amount_anomaly_reason(db, actor.owner_id, normalized_record)
-            refund = refund_candidate(db, actor.owner_id, normalized_record)
+            refund = refund_candidate(db, actor.owner_id, normalized_record, candidate.raw_payload)
             record = create_record(
                 db,
                 actor.owner_id,
@@ -824,7 +889,9 @@ def _commit_markdown_import(
             duplicate_of = None
         consumption = candidate.record.consumption
         resolution: dict[str, Any] = {
-            "money_type": candidate.record.money_entry.type if candidate.record.money_entry else None,
+            "money_type": candidate.record.money_entry.type
+            if candidate.record.money_entry
+            else None,
             "normalization_rule_id": str(rule.id) if rule else None,
         }
         item = ImportReviewItem(
@@ -890,10 +957,12 @@ def imports_commit(
     if not idempotency_key:
         raise AppError(400, "idempotency_key_required", "必须提供 Idempotency-Key")
     if data.source:
-        if data.source.format != "markdown":
-            raise AppError(422, "unsupported_import_commit", "原始内容提交目前仅支持 Markdown")
+        if data.source.format not in {"markdown", "csv"}:
+            raise AppError(
+                422, "unsupported_import_commit", "原始内容提交仅支持已识别表头的 Markdown 或 CSV"
+            )
         try:
-            parsed = parse_markdown_import(data.source.content)
+            parsed = parse_text_import(data.source.content, data.source.format)
         except ValueError as exc:
             raise AppError(422, "invalid_import", str(exc)) from exc
         ensure_categories(db, actor.owner_id)
@@ -959,10 +1028,14 @@ def import_reviews_list(
         stmt = stmt.where(ImportReviewItem.review_state == state)
     rows = list(db.scalars(stmt.order_by(ImportReviewItem.created_at.desc()).limit(limit)))
     batch_ids = {row.batch_id for row in rows}
-    batches = {
-        row.id: row
-        for row in db.scalars(select(ImportBatch).where(ImportBatch.id.in_(batch_ids)))
-    } if batch_ids else {}
+    batches = (
+        {
+            row.id: row
+            for row in db.scalars(select(ImportBatch).where(ImportBatch.id.in_(batch_ids)))
+        }
+        if batch_ids
+        else {}
+    )
     return {
         "items": [
             {
@@ -986,14 +1059,17 @@ def import_batch_get(
 
 
 def _refresh_batch_state(db: Session, batch_id: uuid.UUID) -> None:
-    pending = db.scalar(
-        select(func.count())
-        .select_from(ImportReviewItem)
-        .where(
-            ImportReviewItem.batch_id == batch_id,
-            ImportReviewItem.review_state == "pending",
+    pending = (
+        db.scalar(
+            select(func.count())
+            .select_from(ImportReviewItem)
+            .where(
+                ImportReviewItem.batch_id == batch_id,
+                ImportReviewItem.review_state == "pending",
+            )
         )
-    ) or 0
+        or 0
+    )
     batch = db.get(ImportBatch, batch_id)
     if batch:
         batch.state = "open" if pending else "completed"
@@ -1007,117 +1083,10 @@ def import_review_resolve(
     db: Session = Depends(get_db),
 ):
     if actor.actor_type != "user":
-        raise AppError(403, "user_confirmation_required", "导入复核决定必须由用户会话确认")
-    item = owned(db, ImportReviewItem, review_id, actor.owner_id, "import_review")
-    if item.revision != data.revision:
-        raise AppError(409, "revision_conflict", "复核项已被其他操作更新")
-    if item.review_state != "pending":
-        raise AppError(409, "review_already_decided", "复核项已经处理")
-    resolution = dict(item.resolution or {})
-    if data.dismiss:
-        item.review_state = "dismissed"
-        resolution["dismissed"] = True
-    else:
-        record = get_record(db, actor.owner_id, item.record_id)
-        if data.merchant_id:
-            merchant = owned(db, Merchant, data.merchant_id, actor.owner_id, "merchant")
-            if record.consumption is None or not item.raw_merchant_name:
-                raise AppError(422, "merchant_not_applicable", "此导入项没有原始商家文本")
-            record.consumption.merchant_id = merchant.id
-            item.normalized_merchant_id = merchant.id
-            resolution["merchant_id"] = str(merchant.id)
-            if data.learn_merchant_rule:
-                normalized = normalize_merchant(item.raw_merchant_name)
-                rule = db.scalar(
-                    select(MerchantNormalizationRule).where(
-                        MerchantNormalizationRule.owner_id == actor.owner_id,
-                        MerchantNormalizationRule.normalized_value == normalized,
-                        MerchantNormalizationRule.active.is_(True),
-                    )
-                )
-                if rule and rule.merchant_id != merchant.id:
-                    raise AppError(
-                        409,
-                        "normalization_rule_conflict",
-                        "该原始商家文本已有活动规则，请先撤销旧规则",
-                    )
-                if rule:
-                    rule.evidence_count += 1
-                    rule.revision += 1
-                else:
-                    rule = MerchantNormalizationRule(
-                        owner_id=actor.owner_id,
-                        normalized_value=normalized,
-                        merchant_id=merchant.id,
-                        explanation=(
-                            "由用户在 1 条导入复核中确认；"
-                            "仅精确匹配规范化后的原始商家文本，可随时撤销"
-                        ),
-                        source_review_item_id=item.id,
-                    )
-                    db.add(rule)
-                    try:
-                        db.flush()
-                    except IntegrityError as exc:
-                        db.rollback()
-                        raise AppError(
-                            409,
-                            "normalization_rule_conflict",
-                            "该原始商家文本已被其他复核建立规则，请刷新后重试",
-                        ) from exc
-                rule.explanation = (
-                    f"由用户在 {rule.evidence_count} 条导入复核中确认；"
-                    "仅精确匹配规范化后的原始商家文本，可随时撤销"
-                )
-                resolution["normalization_rule_id"] = str(rule.id)
-        if data.refund_record_id:
-            target = get_record(db, actor.owner_id, data.refund_record_id)
-            if (
-                target.id == record.id
-                or target.money_entry is None
-                or target.money_entry.type != "expense"
-            ):
-                raise AppError(422, "invalid_refund_target", "退款只能关联同一用户的其他支出记录")
-            if record.money_entry is None or record.money_entry.type != "refund":
-                raise AppError(422, "not_a_refund", "此导入项不是退款")
-            record.money_entry.related_entry_id = target.money_entry.id
-            item.refund_candidate_entry_id = target.money_entry.id
-            resolution["refund_record_id"] = str(target.id)
-        if data.accept_amount_anomaly:
-            if item.amount_anomaly_reason is None:
-                raise AppError(422, "no_amount_anomaly", "此导入项没有待确认的金额异常")
-            resolution["amount_anomaly_accepted"] = item.amount_anomaly_reason
-            item.amount_anomaly_reason = None
-        item.resolution = resolution
-        # A duplicate must be explicitly dismissed; other decisions can be completed incrementally.
-        remaining = [reason for reason in serialize_review_item(item)["review_reasons"] if reason != "duplicate"]
-        if not remaining and item.duplicate_of_record_id is None:
-            item.review_state = "resolved"
-    if data.note:
-        resolution["note"] = data.note
-    item.resolution = resolution
-    item.revision += 1
-    db.add(
-        AuditEvent(
-            owner_id=actor.owner_id,
-            actor_type=actor.actor_type,
-            actor_id=actor_id(actor),
-            action="import.review.decided",
-            aggregate_type="import_review",
-            aggregate_id=item.id,
-            details={
-                "state": item.review_state,
-                "merchant_linked": data.merchant_id is not None,
-                "refund_linked": data.refund_record_id is not None,
-                "amount_accepted": data.accept_amount_anomaly,
-                "rule_learned": data.learn_merchant_rule,
-            },
-        )
-    )
-    db.flush()
-    _refresh_batch_state(db, item.batch_id)
-    db.commit()
-    return serialize_review_item(item)
+        raise AppError(403, "user_confirmation_required", "导入复核必须由用户确认")
+    from app.services.review import resolve_review
+
+    return resolve_review(db, actor.owner_id, review_id, data)
 
 
 @router.get("/merchant-normalization-rules")
@@ -1162,7 +1131,9 @@ def merchant_rule_revoke(
 ):
     if actor.actor_type != "user":
         raise AppError(403, "user_confirmation_required", "规范化规则必须由用户会话撤销")
-    rule = owned(db, MerchantNormalizationRule, rule_id, actor.owner_id, "normalization_rule")
+    rule = owned_locked(
+        db, MerchantNormalizationRule, rule_id, actor.owner_id, "normalization_rule"
+    )
     if rule.revision != data.revision:
         raise AppError(409, "revision_conflict", "规范化规则版本冲突")
     if not rule.active:
@@ -1189,9 +1160,7 @@ def merchant_rule_revoke(
 
 
 @router.get("/insights/data-quality")
-def insight_data_quality(
-    actor: Actor = Depends(current_actor), db: Session = Depends(get_db)
-):
+def insight_data_quality(actor: Actor = Depends(current_actor), db: Session = Depends(get_db)):
     return quality_metrics(db, actor.owner_id)
 
 
@@ -1276,13 +1245,15 @@ def merchants_get(
 def merchants_patch(
     merchant_id: uuid.UUID,
     data: MerchantCreate,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     actor: Actor = Depends(current_actor),
     db: Session = Depends(get_db),
 ):
-    row = owned(db, Merchant, merchant_id, actor.owner_id, "merchant")
-    for key, value in data.model_dump().items():
-        setattr(row, key, value)
-    db.commit()
+    if actor.actor_type != "user":
+        raise AppError(403, "user_confirmation_required", "身份整理需要用户会话")
+    from app.services.identities import edit_identity
+
+    edit_identity(db, actor.owner_id, "merchant", merchant_id, data, idempotency_key, alias=False)
     return merchants_get(merchant_id, actor, db)
 
 
@@ -1294,18 +1265,17 @@ def normalize(value: str) -> str:
 def merchant_alias(
     merchant_id: uuid.UUID,
     data: AliasCreate,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     actor: Actor = Depends(current_actor),
     db: Session = Depends(get_db),
 ):
-    owned(db, Merchant, merchant_id, actor.owner_id, "merchant")
-    row = MerchantAlias(
-        merchant_id=merchant_id,
-        alias=data.alias,
-        normalized_alias=normalize(data.alias),
-        source=data.source,
+    if actor.actor_type != "user":
+        raise AppError(403, "user_confirmation_required", "身份整理需要用户会话")
+    from app.services.identities import edit_identity
+
+    row = edit_identity(
+        db, actor.owner_id, "merchant", merchant_id, data, idempotency_key, alias=True
     )
-    db.add(row)
-    db.commit()
     return simple_model(row, ("id", "alias", "normalized_alias", "source"))
 
 
@@ -1313,27 +1283,17 @@ def merchant_alias(
 def merchant_merge(
     merchant_id: uuid.UUID,
     data: MergeCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     actor: Actor = Depends(current_actor),
     db: Session = Depends(get_db),
 ):
-    source = owned(db, Merchant, merchant_id, actor.owner_id, "merchant")
-    target = owned(db, Merchant, data.target_id, actor.owner_id, "merchant")
-    if source.id == target.id:
-        raise AppError(422, "self_merge", "不能合并到自身")
-    source.canonical_merchant_id = target.id
-    source.active = False
-    db.add(
-        AuditEvent(
-            owner_id=actor.owner_id,
-            actor_type="user",
-            actor_id=actor_id(actor),
-            action="merchant.merged",
-            aggregate_type="merchant",
-            aggregate_id=source.id,
-            details={"target_id": str(target.id), "reason": data.reason},
-        )
+    if actor.actor_type != "user":
+        raise AppError(403, "user_confirmation_required", "身份合并必须由用户确认")
+    from app.services.identities import merge_identity
+
+    merge_identity(
+        db, actor.owner_id, "merchant", merchant_id, data.target_id, data.reason, idempotency_key
     )
-    db.commit()
     return merchants_get(merchant_id, actor, db)
 
 
@@ -1440,13 +1400,15 @@ def items_get(
 def items_patch(
     item_id: uuid.UUID,
     data: ItemCreate,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     actor: Actor = Depends(current_actor),
     db: Session = Depends(get_db),
 ):
-    row = owned(db, ItemIdentity, item_id, actor.owner_id, "item")
-    for key, value in data.model_dump().items():
-        setattr(row, key, value)
-    db.commit()
+    if actor.actor_type != "user":
+        raise AppError(403, "user_confirmation_required", "身份整理需要用户会话")
+    from app.services.identities import edit_identity
+
+    edit_identity(db, actor.owner_id, "item", item_id, data, idempotency_key, alias=False)
     return items_get(item_id, actor, db)
 
 
@@ -1454,18 +1416,15 @@ def items_patch(
 def item_alias(
     item_id: uuid.UUID,
     data: AliasCreate,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     actor: Actor = Depends(current_actor),
     db: Session = Depends(get_db),
 ):
-    owned(db, ItemIdentity, item_id, actor.owner_id, "item")
-    row = ItemAlias(
-        item_identity_id=item_id,
-        alias=data.alias,
-        normalized_alias=normalize(data.alias),
-        source=data.source,
-    )
-    db.add(row)
-    db.commit()
+    if actor.actor_type != "user":
+        raise AppError(403, "user_confirmation_required", "身份整理需要用户会话")
+    from app.services.identities import edit_identity
+
+    row = edit_identity(db, actor.owner_id, "item", item_id, data, idempotency_key, alias=True)
     return simple_model(row, ("id", "alias", "normalized_alias", "source"))
 
 
@@ -1473,27 +1432,17 @@ def item_alias(
 def item_merge(
     item_id: uuid.UUID,
     data: MergeCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     actor: Actor = Depends(current_actor),
     db: Session = Depends(get_db),
 ):
-    source = owned(db, ItemIdentity, item_id, actor.owner_id, "item")
-    target = owned(db, ItemIdentity, data.target_id, actor.owner_id, "item")
-    if source.id == target.id:
-        raise AppError(422, "self_merge", "不能合并到自身")
-    source.canonical_item_id = target.id
-    source.active = False
-    db.add(
-        AuditEvent(
-            owner_id=actor.owner_id,
-            actor_type="user",
-            actor_id=actor_id(actor),
-            action="item.merged",
-            aggregate_type="item",
-            aggregate_id=source.id,
-            details={"target_id": str(target.id), "reason": data.reason},
-        )
+    if actor.actor_type != "user":
+        raise AppError(403, "user_confirmation_required", "身份合并必须由用户确认")
+    from app.services.identities import merge_identity
+
+    merge_identity(
+        db, actor.owner_id, "item", item_id, data.target_id, data.reason, idempotency_key
     )
-    db.commit()
     return items_get(item_id, actor, db)
 
 
@@ -1516,14 +1465,17 @@ def suggestions(actor: Actor = Depends(current_actor), db: Session = Depends(get
 def suggestion_decide(
     suggestion_id: uuid.UUID,
     decision: str,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     actor: Actor = Depends(current_actor),
     db: Session = Depends(get_db),
 ):
     if decision not in {"accept", "reject"}:
         raise AppError(404, "route_not_found", "操作不存在")
-    row = owned(db, IdentitySuggestion, suggestion_id, actor.owner_id, "suggestion")
-    row.state = "accepted" if decision == "accept" else "rejected"
-    db.commit()
+    if actor.actor_type != "user":
+        raise AppError(403, "user_confirmation_required", "身份决定必须由用户确认")
+    from app.services.identities import decide_suggestion
+
+    row = decide_suggestion(db, actor.owner_id, suggestion_id, decision, idempotency_key)
     return simple_model(row, ("id", "state"))
 
 
@@ -1599,7 +1551,7 @@ def intents_patch(
     actor: Actor = Depends(current_actor),
     db: Session = Depends(get_db),
 ):
-    row = owned(db, SpendingIntent, intent_id, actor.owner_id, "intent")
+    row = owned_locked(db, SpendingIntent, intent_id, actor.owner_id, "intent")
     expected = parse_etag(if_match)
     if row.revision != expected:
         raise AppError(409, "revision_conflict", "计划已被更新")
@@ -1622,6 +1574,10 @@ def intent_draft(
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
+    payload = {"intent_id": str(intent_id)}
+    replay = idempotency_lookup(db, actor.owner_id, "intent.draft", idempotency_key, payload)
+    if replay:
+        return serialize_record(db, get_record(db, actor.owner_id, replay.resource_id))
     row = owned(db, SpendingIntent, intent_id, actor.owner_id, "intent")
     money = None
     if row.expected_amount:
@@ -1639,7 +1595,16 @@ def intent_draft(
             "lines": [{"raw_name": row.title, "item_identity_id": row.item_identity_id}],
         },
     )
-    record = create_record(db, actor.owner_id, data, idempotency_key or "", actor_id(actor))
+    record = create_record(
+        db,
+        actor.owner_id,
+        data,
+        f"intent:{request_hash(idempotency_key).hex()}",
+        actor_id(actor),
+        commit=False,
+    )
+    idempotency_save(db, actor.owner_id, "intent.draft", idempotency_key, payload, record.id)
+    db.commit()
     etag(response, record.revision)
     return serialize_record(db, record)
 
@@ -1652,7 +1617,7 @@ def intent_complete(
     actor: Actor = Depends(current_actor),
     db: Session = Depends(get_db),
 ):
-    row = owned(db, SpendingIntent, intent_id, actor.owner_id, "intent")
+    row = owned_locked(db, SpendingIntent, intent_id, actor.owner_id, "intent")
     if row.revision != parse_etag(if_match):
         raise AppError(409, "revision_conflict", "计划已被更新")
     record = get_record(db, actor.owner_id, record_id)
@@ -1753,7 +1718,7 @@ def commitments_patch(
     actor: Actor = Depends(current_actor),
     db: Session = Depends(get_db),
 ):
-    row = owned(db, RecurringCommitment, commitment_id, actor.owner_id, "commitment")
+    row = owned_locked(db, RecurringCommitment, commitment_id, actor.owner_id, "commitment")
     if row.revision != parse_etag(if_match):
         raise AppError(409, "revision_conflict", "周期事项已被更新")
     if state not in {"active", "paused", "ended"}:
@@ -1778,8 +1743,13 @@ def commitment_draft(
     actor: Actor = Depends(current_actor),
     db: Session = Depends(get_db),
 ):
-    row = owned(db, RecurringCommitment, commitment_id, actor.owner_id, "commitment")
+    row = owned_locked(db, RecurringCommitment, commitment_id, actor.owner_id, "commitment")
+    if occurrence is not None and occurrence.tzinfo is None:
+        raise AppError(422, "timezone_required", "周期发生时间必须包含时区")
     occurrence = occurrence or row.next_due_at
+    if occurrence.tzinfo is None:  # SQLite test storage; PostgreSQL retains the offset.
+        occurrence = occurrence.replace(tzinfo=UTC)
+    occurrence = occurrence.astimezone(UTC)
     key = f"commitment:{row.id}:occurrence:{occurrence.isoformat()}"
     existing = db.scalar(
         select(Reminder).where(Reminder.owner_id == actor.owner_id, Reminder.reminder_key == key)
@@ -1810,7 +1780,7 @@ def commitment_draft(
             title=row.title,
         ),
     )
-    record = create_record(db, actor.owner_id, data, key, actor_id(actor))
+    record = create_record(db, actor.owner_id, data, key, actor_id(actor), commit=False)
     reminder.payload = {"record_id": str(record.id)}
     reminder.state = "handled"
     row.last_record_id = record.id
@@ -1844,7 +1814,7 @@ def reminder_action(
     states = {"read": "read", "dismiss": "dismissed"}
     if action not in states:
         raise AppError(404, "route_not_found", "操作不存在")
-    row = owned(db, Reminder, reminder_id, actor.owner_id, "reminder")
+    row = owned_locked(db, Reminder, reminder_id, actor.owner_id, "reminder")
     row.state = states[action]
     db.commit()
     return simple_model(row, ("id", "state"))
@@ -2006,7 +1976,7 @@ def forecasts_generate(
         data.timezone,
         data.horizon_days,
     )
-    return serialize_run(run, items, replayed)
+    return decorate_run(db, run, items, serialize_run(run, items, replayed))
 
 
 def _forecast_run(db: Session, owner_id: str, run_id: uuid.UUID) -> ForecastRun:
@@ -2026,7 +1996,7 @@ def _forecast_response(db: Session, run: ForecastRun) -> dict[str, Any]:
             .order_by(ForecastItem.predicted_at, ForecastItem.source_key)
         )
     )
-    return serialize_run(run, items)
+    return decorate_run(db, run, items, serialize_run(run, items))
 
 
 @router.get("/forecasts/latest")
@@ -2073,6 +2043,8 @@ def forecast_item_dismiss(
     actor: Actor = Depends(require_scope("ledger.write-draft")),
     db: Session = Depends(get_db),
 ):
+    if actor.actor_type != "user":
+        raise AppError(403, "user_confirmation_required", "建议反馈需要用户会话")
     row = db.scalar(
         select(ForecastItem)
         .join(ForecastRun, ForecastItem.run_id == ForecastRun.id)
@@ -2082,11 +2054,16 @@ def forecast_item_dismiss(
         raise AppError(404, "forecast_item_not_found", "预测项不存在")
     if row.revision != parse_etag(if_match):
         raise AppError(409, "revision_conflict", "预测项已被更新")
-    row.state = "dismissed"
-    row.revision += 1
-    db.commit()
+    row, feedback = save_feedback(
+        db, actor.owner_id, item_id, parse_etag(if_match), None, "dismissed"
+    )
     etag(response, row.revision)
-    return {"id": str(row.id), "state": row.state, "revision": row.revision}
+    return {
+        "id": str(row.id),
+        "state": feedback.state,
+        "revision": row.revision,
+        "feedback_revision": feedback.revision,
+    }
 
 
 @router.post("/intake/webhooks/{adapter}", status_code=201)
@@ -2509,12 +2486,16 @@ def archive_evidence_create(
     if binding.released_at is not None:
         raise AppError(409, "asset_binding_released", "已释放的 Asset 引用不能交给 Archive")
     directly_bound = binding.source_type == "record" and binding.source_id == record_id
-    source_bound = binding.source_type == "capture_source" and db.scalar(
-        select(LedgerRecordSource).where(
-            LedgerRecordSource.record_id == record_id,
-            LedgerRecordSource.source_id == binding.source_id,
+    source_bound = (
+        binding.source_type == "capture_source"
+        and db.scalar(
+            select(LedgerRecordSource).where(
+                LedgerRecordSource.record_id == record_id,
+                LedgerRecordSource.source_id == binding.source_id,
+            )
         )
-    ) is not None
+        is not None
+    )
     if not directly_bound and not source_bound:
         raise AppError(422, "asset_not_record_evidence", "Asset 引用不属于此消费记录")
     payload = {"record_id": record_id, **data.model_dump()}
@@ -2540,9 +2521,7 @@ def archive_evidence_create(
     )
     db.add(row)
     db.flush()
-    remember_create(
-        db, actor, "archive_evidence.create", idempotency_key or "", payload, row.id
-    )
+    remember_create(db, actor, "archive_evidence.create", idempotency_key or "", payload, row.id)
     db.add(
         OutboxEvent(
             event_type="ledger.archive_evidence.linked",

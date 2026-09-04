@@ -1,6 +1,6 @@
 [project]
 name = "shadow-ledger"
-version = "1.1.0"
+version = "1.2.0"
 description = "以消费为中心的个人收支记录与规划系统"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -33,15 +33,23 @@ dev = [
 ledger-web = "app.main:run"
 ledger-worker = "app.worker:run"
 ledger-mcp = "app.mcp_server:run"
-ledger-observed-evidence = "scripts.emit_observed_evidence:main"
-ledger-restore-verify = "scripts.verify_restore:main"
+ledger-observed-evidence = "app.cli.emit_observed_evidence:main"
+ledger-restore-verify = "app.cli.verify_restore:main"
+ledger-migrate = "app.cli.migrate:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["app", "scripts"]
+packages = ["app"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"migrations" = "app/release/migrations"
+"alembic.ini" = "app/release/alembic.ini"
+"shadow-plugin.yaml" = "app/release/shadow-plugin.yaml"
+"contracts" = "app/release/contracts"
+"agent" = "app/release/agent"
 
 [tool.uv.sources]
 shadow-platform = { path = "../shadow-platform", editable = true }

@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -26,7 +26,7 @@ from app.models import (
 )
 from app.schemas import jsonable
 
-ALGORITHM_VERSION = "deterministic-v1"
+ALGORITHM_VERSION = "deterministic-v2"
 
 
 def _canonical(value: Any) -> bytes:
@@ -75,6 +75,12 @@ def build_input_snapshot(
         )
     ]
 
+    line_count = (
+        select(func.count(ConsumptionLine.id))
+        .where(ConsumptionLine.event_id == ConsumptionEvent.id)
+        .correlate(ConsumptionEvent)
+        .scalar_subquery()
+    )
     purchase_rows = db.execute(
         select(
             ConsumptionLine.item_identity_id,
@@ -84,6 +90,7 @@ def build_input_snapshot(
             MoneyEntry.type,
             MoneyEntry.amount,
             MoneyEntry.currency,
+            line_count,
         )
         .join(ConsumptionEvent, ConsumptionLine.event_id == ConsumptionEvent.id)
         .join(LedgerRecord, ConsumptionEvent.record_id == LedgerRecord.id)
@@ -94,19 +101,23 @@ def build_input_snapshot(
             LedgerRecord.state == "confirmed",
             LedgerRecord.occurred_at < cutoff,
             ConsumptionLine.item_identity_id.is_not(None),
+            or_(MoneyEntry.id.is_(None), MoneyEntry.type == "expense"),
         )
         .order_by(ConsumptionLine.item_identity_id, LedgerRecord.occurred_at, LedgerRecord.id)
     )
     purchases_by_record: dict[tuple[uuid.UUID, uuid.UUID], dict[str, Any]] = {}
-    for item_id, name, record_id, occurred_at, money_type, amount, currency in purchase_rows:
+    for item_id, name, record_id, occurred_at, money_type, amount, currency, count in purchase_rows:
         key = (item_id, record_id)
         purchases_by_record[key] = {
             "item_identity_id": str(item_id),
             "item_name": name,
             "record_id": str(record_id),
             "occurred_at": occurred_at.isoformat(),
-            "amount": jsonable(amount) if money_type == "expense" else None,
-            "currency": currency if money_type == "expense" else None,
+            "amount": jsonable(amount) if money_type == "expense" and count == 1 else None,
+            "currency": currency if money_type == "expense" and count == 1 else None,
+            "amount_basis": "single_line_order_total"
+            if money_type == "expense" and count == 1
+            else "unknown",
         }
     purchases = sorted(
         purchases_by_record.values(),
@@ -137,6 +148,7 @@ def build_input_snapshot(
             }
         )
     return {
+        "semantics_version": 2,
         "as_of": as_of.isoformat(),
         "timezone": timezone,
         "horizon_days": horizon_days,
@@ -224,6 +236,17 @@ def calculate(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                     "sample_count": len(rows),
                     "interval_seconds": interval_seconds,
                     "record_ids": [row["record_id"] for row in rows],
+                    **(
+                        {
+                            "amount_basis": "single_line_order_total" if amount else "unknown",
+                            "amount_sample_count": len(amounts_by_currency.get(currency, [])),
+                            "confidence_kind": "heuristic_not_probability",
+                            "interval_min_seconds": min(positive),
+                            "interval_max_seconds": max(positive),
+                        }
+                        if snapshot.get("semantics_version", 1) >= 2
+                        else {}
+                    ),
                 },
                 "expires_at": expires_at.isoformat(),
             }
@@ -363,7 +386,10 @@ def generate_forecast(
 
 
 def verify_run(run: ForecastRun) -> bool:
-    return _digest(calculate(run.input_snapshot)) == run.output_hash
+    return (
+        run.algorithm_version in {"deterministic-v1", "deterministic-v2"}
+        and _digest(calculate(run.input_snapshot)) == run.output_hash
+    )
 
 
 def serialize_item(item: ForecastItem) -> dict[str, Any]:

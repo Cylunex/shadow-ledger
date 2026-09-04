@@ -5,16 +5,19 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>Shadow Ledger</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260903-payment">
-  <script src="{{ prefix }}/static/app.js?v=20260903-payment" defer></script>
+  <link rel="manifest" href="{{ prefix }}/manifest.webmanifest">
+  <meta name="theme-color" content="#253d37">
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260904-workbench">
+  <script type="module" src="{{ prefix }}/static/app.js?v=20260904-workbench"></script>
 </head>
 <body data-page="{{ page }}" data-prefix="{{ prefix }}">
   <a class="skip" href="#main">跳到主要内容</a>
   <header class="topbar">
     <div><span class="eyebrow">SHADOW</span><h1>Ledger</h1></div>
-    <button id="draft-button" class="quiet" type="button">草稿箱</button>
+    <div class="actions"><button id="install-app" class="quiet" type="button">添加到主屏幕</button><button id="share-app" class="quiet" type="button" hidden>分享入口</button><button id="draft-button" class="quiet" type="button">草稿箱</button></div>
   </header>
   <main id="main">
+    <p id="global-status" role="status" aria-live="polite"></p>
     <section id="records-page" class="page">
       <article class="summary" aria-labelledby="summary-title">
         <p id="summary-title" class="eyebrow">本月概览</p>
@@ -26,7 +29,8 @@
         <label for="amount">金额</label><div class="amount-row"><span>¥</span><input id="amount" name="amount" inputmode="decimal" autocomplete="off" required placeholder="0.00" aria-describedby="form-status"></div>
         <label for="description">一句话描述 <span>可选</span></label><input id="description" name="description" maxlength="500" placeholder="午餐、工资、退款……">
         <details><summary>日期、分类、支付方式</summary><div class="details-grid"><label>日期时间<input id="occurred-at" type="datetime-local"></label><label>分类<select id="category"><option value="">未分类</option></select></label><label>支付方式<select id="payment-method"><option value="">未提供</option></select></label></div></details>
-        <button class="primary" type="submit">记录</button><p id="form-status" role="status"></p>
+        <div class="actions"><button class="primary" type="submit" data-mode="confirm">确认录入</button><button type="submit" data-mode="draft">保存草稿</button><button type="submit" data-mode="offline">仅暂存本机</button></div><p id="form-status" role="status"></p>
+        <details><summary>本机文本草稿（主动开启）</summary><p class="muted">仅在当前页面已打开时可离线暂存，不缓存附件、原始账单或登录凭据。共享设备不建议启用。草稿保留 7 天，切换用户会清理，不自动录入。</p><label><input id="offline-enable" type="checkbox">允许在此浏览器暂存文本草稿</label><p id="offline-count"></p><button id="offline-sync" type="button">同步为待确认草稿</button><button id="offline-clear" type="button">清空本机草稿</button></details>
       </form>
       <div class="shortcuts"><button id="text-capture">说一句</button><button id="asset-capture">扫截图</button><button id="bill-import">导入账单</button><button id="import-review">导入复核</button><button id="copy-last">复制上次</button></div>
       <details id="record-filters" class="filter-card">
@@ -47,14 +51,15 @@
           <div class="filter-actions"><button class="primary" type="submit">应用筛选</button><button id="filter-reset" class="quiet" type="button">重置</button></div>
         </form>
       </details>
-      <section><div class="section-title"><h2 id="timeline-title">最近记录</h2><div><button id="batch-confirm" class="quiet" type="button" hidden>确认这批</button> <button id="refresh" type="button">刷新</button></div></div><div id="timeline" class="timeline" aria-live="polite"></div></section>
+      <section><div class="section-title"><h2 id="timeline-title">最近记录</h2><div><button id="select-visible" type="button" hidden>选择当前已加载草稿</button><button id="batch-confirm" class="quiet" type="button" hidden>确认已选</button> <button id="refresh" type="button">刷新</button></div></div><div id="timeline" class="timeline" aria-live="polite"></div></section>
       <button id="load-more" class="quiet load-more" type="button" hidden>加载更多</button>
     </section>
-    <section id="consumption-page" class="page"><h2>消费</h2><p class="muted">按场景回看消费内容、原始商家与体验。</p><div id="scene-cards" class="card-grid"></div><h3>常去商家</h3><div id="merchant-list" class="list"></div><h3>常买内容</h3><div id="item-list" class="list"></div></section>
+    <section id="workbench-page" class="page"><h2>待处理</h2><p class="muted">这里汇总需要你决定的事项。保留未知信息也是有效选择；来源和建议不会自动确认消费。</p><form id="work-filter" class="details-grid"><label>类型<select id="work-kind"><option value="">全部</option><option value="draft">待确认草稿</option><option value="review">导入复核</option><option value="observation">来源变化</option><option value="failed">采集失败</option><option value="identity">身份建议</option></select></label><label>搜索<input id="work-query" maxlength="200"></label><button type="submit">筛选</button></form><p id="work-counts" role="status"></p><div id="work-list" class="list"></div><button id="work-more" type="button" hidden>加载更多</button></section>
+    <section id="consumption-page" class="page"><h2>消费记忆</h2><p class="muted">按场景回看消费内容、原始商家与体验。</p><div id="scene-cards" class="card-grid"></div><h3>常去商家</h3><div id="merchant-list" class="list"></div><h3>常买内容</h3><div id="item-list" class="list"></div><h3>商家与商品整理</h3><form id="identity-filter" class="details-grid"><label>类型<select id="identity-kind"><option value="merchant">商家</option><option value="item">商品</option></select></label><label>名称<input id="identity-query" maxlength="200"></label><button type="submit">搜索</button></form><div class="actions"><button id="identity-create" type="button">新建身份</button><button id="identity-propose" type="button">检查同名候选</button></div><div id="identity-catalog" class="list"></div></section>
     <section id="planning-page" class="page"><h2>计划</h2><div class="tabs"><button data-plan="intents" class="active">想要</button><button data-plan="commitments">周期</button><button data-plan="cycles">使用周期</button><button data-plan="reminders">提醒</button></div><div id="planning-list" class="list"></div><button id="add-plan" class="primary">添加计划</button></section>
-    <section id="insights-page" class="page"><h2>洞察</h2><p class="muted">所有金额统计只包含已确认事实，未知金额消费只进入频率；预测只是可重算建议。</p><div id="insight-summary" class="card-grid"></div><h3>数据完整度</h3><div id="quality-summary" class="list"></div><div class="section-title"><h3>消费预测</h3><button id="forecast-generate" type="button">重新计算</button></div><div id="forecast-list" class="list"></div><h3>消费场景频率</h3><div id="insight-scenes" class="bars"></div><h3>消费目标</h3><div id="budget-list" class="list"></div></section>
+    <section id="insights-page" class="page"><h2>洞察</h2><p class="muted">所有金额统计只包含已确认事实，未知金额消费只进入频率；预测只是可重算建议。</p><div id="insight-summary" class="card-grid"></div><h3>数据完整度</h3><div id="quality-summary" class="list"></div><div class="section-title"><h3>消费预测</h3><button id="forecast-generate" type="button">重新计算</button></div><label>建议状态<select id="forecast-state"><option value="active">待考虑</option><option value="snoozed">稍后</option><option value="handled">已处理</option><option value="dismissed">已忽略</option><option value="">全部</option></select></label><div id="forecast-list" class="list"></div><details><summary>回看复购建议效果</summary><label>起始日期<input id="backtest-date" type="date"></label><button id="backtest-run" type="button">比较后续 90 天</button><div id="backtest-result" role="status"></div></details><h3>消费场景频率</h3><div id="insight-scenes" class="bars"></div><h3>消费目标</h3><div id="budget-list" class="list"></div></section>
   </main>
-  <nav class="bottom-nav" aria-label="主导航"><a href="{{ prefix }}/" data-page="records">记录</a><a href="{{ prefix }}/consumption" data-page="consumption">消费</a><a href="{{ prefix }}/planning" data-page="planning">计划</a><a href="{{ prefix }}/insights" data-page="insights">洞察</a></nav>
+  <nav class="bottom-nav" aria-label="主导航"><a href="{{ prefix }}/" data-page="records">记录</a><a href="{{ prefix }}/workbench" data-page="workbench">待处理</a><a href="{{ prefix }}/consumption" data-page="consumption">消费</a><a href="{{ prefix }}/planning" data-page="planning">计划</a><a href="{{ prefix }}/insights" data-page="insights">洞察</a></nav>
   <dialog id="dialog"><div><button class="dialog-close" type="button" aria-label="关闭">×</button><div id="dialog-body"></div></div></dialog>
 </body>
 </html>

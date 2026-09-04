@@ -36,7 +36,9 @@ from app.models import (
     OutboxEvent,
     RecurringCommitment,
     Reminder,
+    SourceObservation,
     SpendingIntent,
+    SuggestionFeedback,
     UseCycle,
 )
 from app.schemas import RecordCreate, jsonable
@@ -158,29 +160,56 @@ def process_job(db: Session, job: BackgroundJob) -> None:
         source.capture_state = "processing"
         db.commit()
         result = CaptureParserClient(get_settings()).parse(source.id, source.asset_id)
-        for index, raw_candidate in enumerate(result.get("candidates", [])):
-            candidate = RecordCreate.model_validate({**raw_candidate, "confirm": False})
-            record = create_record(
+        from app.services.intake_reviews import register_intake_reviews
+        from app.services.records import request_hash
+        from app.services.sources import append_observation, ensure_baseline
+
+        raw_candidates = result.get("candidates", [])
+        if not isinstance(raw_candidates, list) or len(raw_candidates) > 100:
+            raise ValueError("invalid_candidate_count")
+        candidates = [
+            RecordCreate.model_validate({**raw, "confirm": False}) for raw in raw_candidates
+        ]
+        parsed_payload = {
+            "fields": result.get("fields", {}),
+            "candidates": [jsonable(candidate.model_dump()) for candidate in candidates],
+        }
+        prior_links = list(
+            db.scalars(select(LedgerRecordSource).where(LedgerRecordSource.source_id == source.id))
+        )
+        if prior_links:
+            ensure_baseline(db, source)
+            append_observation(
                 db,
-                source.owner_id,
-                candidate,
-                f"capture:{source.id}:candidate:{index}",
-                "capture-parser",
+                source,
+                request_hash(parsed_payload).hex(),
+                parsed_payload,
+                candidates[0] if len(candidates) == 1 and len(prior_links) == 1 else None,
+                parser=str(result.get("parser", "external"))[:80],
+                parser_version=str(result.get("parser_version", "1"))[:40],
             )
-            linked = db.get(
-                LedgerRecordSource,
-                {"record_id": record.id, "source_id": source.id, "role": "capture"},
-            )
-            if linked is None:
+        else:
+            source.parser = str(result.get("parser", "external"))[:80]
+            source.parser_version = str(result.get("parser_version", "1"))[:40]
+            source.raw_payload = parsed_payload
+            records = []
+            for index, candidate in enumerate(candidates):
+                record = create_record(
+                    db,
+                    source.owner_id,
+                    candidate,
+                    f"capture:{source.id}:candidate:{index}",
+                    "capture-parser",
+                    actor_type="service",
+                    commit=False,
+                )
+                records.append(record)
                 db.add(LedgerRecordSource(record_id=record.id, source_id=source.id, role="capture"))
+            ensure_baseline(db, source)
+            if records:
+                register_intake_reviews(db, source.owner_id, source, records, candidates)
         source.capture_state = "parsed"
         source.error_code = None
-        source.parser = str(result.get("parser", "external"))[:80]
-        source.parser_version = str(result.get("parser_version", "1"))[:40]
-        source.raw_payload = {
-            "fields": result.get("fields", {}),
-            "candidate_count": len(result.get("candidates", [])),
-        }
     elif job.job_type == "export":
         owner_id = str(job.payload["owner_id"])
         export_format = str(job.payload["format"])
@@ -205,6 +234,8 @@ def process_job(db: Session, job: BackgroundJob) -> None:
                 "reminders": Reminder,
                 "use_cycles": UseCycle,
                 "forecast_runs": ForecastRun,
+                "source_observations": SourceObservation,
+                "suggestion_feedback": SuggestionFeedback,
             }
             forecast_run_ids = list(
                 db.scalars(select(ForecastRun.id).where(ForecastRun.owner_id == owner_id))

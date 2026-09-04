@@ -95,7 +95,7 @@ def _markdown_table(content: str) -> tuple[list[str], list[dict[str, str]]]:
         ):
             continue
         rows: list[dict[str, str]] = []
-        for line in lines[index + 2 :]:
+        for line_number, line in enumerate(lines[index + 2 :], start=index + 3):
             if not line.strip():
                 if rows:
                     break
@@ -105,7 +105,9 @@ def _markdown_table(content: str) -> tuple[list[str], list[dict[str, str]]]:
             values = _cells(line)
             if len(values) != len(headers):
                 raise ValueError("Markdown 表格存在列数不一致的行")
-            rows.append(dict(zip(headers, values, strict=True)))
+            row = dict(zip(headers, values, strict=True))
+            row["_source_line"] = line_number
+            rows.append(row)
         return headers, rows
     raise ValueError("没有找到 Markdown 表格")
 
@@ -148,6 +150,17 @@ def _time(value: str) -> datetime:
 def _fingerprint(platform: str, *parts: str) -> str:
     digest = hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
     return f"{platform}:{digest}"
+
+
+def _raw_fingerprint(value) -> str:
+    # Added source locators must not change legacy identifiers for rows without IDs.
+    def strip(item):
+        if isinstance(item, dict):
+            return {key: strip(value) for key, value in item.items() if key != "_source_line"}
+        if isinstance(item, list):
+            return [strip(value) for value in item]
+        return item
+    return json.dumps(strip(value), sort_keys=True)
 
 
 def _payload(platform: str, rows: list[dict[str, str]], warnings: tuple[str, ...] = ()):
@@ -342,7 +355,7 @@ def _parse_taobao(headers: list[str], rows: list[dict[str, str]]) -> ParsedImpor
                     order.get("支付方式"),
                 ),
                 source_external_id=_fingerprint(
-                    "taobao", order.get("订单号", "") or json.dumps(group, sort_keys=True)
+                    "taobao", order.get("订单号", "") or _raw_fingerprint(group)
                 ),
                 raw_payload=_payload("taobao", group),
             )
@@ -395,7 +408,7 @@ def _parse_meituan(headers: list[str], rows: list[dict[str, str]]) -> ParsedImpo
                 ),
                 source_external_id=_fingerprint(
                     "meituan",
-                    row.get("交易单号", "") or json.dumps(row, sort_keys=True),
+                    row.get("交易单号", "") or _raw_fingerprint(row),
                     trade_type,
                 ),
                 raw_payload=_payload("meituan", [row], warnings),
@@ -471,7 +484,7 @@ def _parse_eleme(headers: list[str], rows: list[dict[str, str]]) -> ParsedImport
                     row.get("支付方式"),
                 ),
                 source_external_id=_fingerprint(
-                    "eleme", row.get("订单号", "") or json.dumps(row, sort_keys=True)
+                    "eleme", row.get("订单号", "") or _raw_fingerprint(row)
                 ),
                 raw_payload=_payload("eleme", [row]),
             )

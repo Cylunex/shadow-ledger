@@ -24,6 +24,7 @@ from app.errors import AppError, app_error_handler
 from app.external import external_prefix
 from app.machine import router as machine_router
 from app.oidc import router as oidc_router
+from app.routers.workbench import router as workbench_router
 from app.security import validate_csrf
 
 log = logging.getLogger("ledger")
@@ -68,6 +69,7 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
     app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
     app.include_router(oidc_router)
     app.include_router(api_router)
+    app.include_router(workbench_router)
     app.include_router(machine_router)
     app.add_exception_handler(AppError, app_error_handler)
 
@@ -101,6 +103,11 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
             "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         )
         response.headers["Referrer-Policy"] = "no-referrer"
+        # Modules have stable URLs. Revalidate them on every release and never cache
+        # personal API/HTML responses in a shared or persistent browser cache.
+        response.headers["Cache-Control"] = (
+            "no-cache" if request.url.path.startswith("/static/") else "no-store"
+        )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         log.info(
@@ -139,6 +146,38 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
             request,
             "index.html",
             {"page": "consumption", "prefix": external_prefix(request)},
+        )
+
+    @app.get("/workbench", response_class=HTMLResponse)
+    def workbench(request: Request):
+        return templates.TemplateResponse(
+            request, "index.html", {"page": "workbench", "prefix": external_prefix(request)}
+        )
+
+    @app.get("/manifest.webmanifest")
+    def web_manifest(request: Request):
+        prefix = external_prefix(request)
+        return JSONResponse(
+            {
+                "name": "Shadow Ledger",
+                "short_name": "Ledger",
+                "display": "standalone",
+                "id": f"{prefix}/",
+                "start_url": f"{prefix}/",
+                "scope": f"{prefix}/",
+                "background_color": "#f4f1ea",
+                "theme_color": "#253d37",
+                "icons": [
+                    {"src": f"{prefix}/static/icon.svg", "sizes": "any", "type": "image/svg+xml"}
+                ],
+                "shortcuts": [{"name": "待处理", "url": f"{prefix}/workbench"}],
+                "share_target": {
+                    "action": f"{prefix}/",
+                    "method": "GET",
+                    "params": {"title": "title", "text": "text", "url": "url"},
+                },
+            },
+            media_type="application/manifest+json",
         )
 
     @app.get("/planning", response_class=HTMLResponse)

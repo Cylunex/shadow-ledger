@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, exists, or_, select
+from sqlalchemy import and_, exists, or_, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from app.errors import AppError
@@ -49,7 +49,12 @@ def _money(db: Session, owner_id: str, record: LedgerRecord, data: MoneyEntryInp
             .join(LedgerRecord)
             .where(MoneyEntry.id == data.related_entry_id, LedgerRecord.owner_id == owner_id)
         )
-        if related is None or related.type != "expense":
+        if (
+            related is None
+            or related.type != "expense"
+            or related.currency != data.currency
+            or related.record.state == "voided"
+        ):
             raise AppError(422, "invalid_related_entry", "退款只能关联本人的支出记录")
         if data.type != "refund":
             raise AppError(422, "invalid_related_entry", "只有退款可以关联原支出")
@@ -138,7 +143,9 @@ def request_hash(data: Any) -> bytes:
             return result
         return value
 
-    encoded = json.dumps(compatible(jsonable(data)), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    encoded = json.dumps(
+        compatible(jsonable(data)), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
     return hashlib.sha256(encoded.encode()).digest()
 
 
@@ -147,6 +154,9 @@ def idempotency_lookup(
 ) -> IdempotencyRecord | None:
     if not key:
         raise AppError(400, "idempotency_key_required", "创建请求必须提供 Idempotency-Key")
+    if len(key) > 200:
+        raise AppError(422, "invalid_idempotency_key", "幂等键最多 200 个字符")
+    lock_command(db, owner_id, operation, key)
     row = db.scalar(
         select(IdempotencyRecord).where(
             IdempotencyRecord.owner_id == owner_id,
@@ -158,6 +168,17 @@ def idempotency_lookup(
     if row and row.request_hash != digest:
         raise AppError(409, "idempotency_mismatch", "同一幂等键不能用于不同请求")
     return row
+
+
+def lock_command(db: Session, owner_id: str, operation: str, key: str) -> None:
+    """Serialize absent-row creation; unique constraints remain the final backstop."""
+    if db.get_bind().dialect.name == "postgresql":
+        value = int.from_bytes(
+            hashlib.sha256(f"{owner_id}|{operation}|{key}".encode()).digest()[:8],
+            byteorder="big",
+            signed=True,
+        )
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": value})
 
 
 def idempotency_save(
@@ -316,10 +337,13 @@ def list_records(
                         or_(
                             MoneyEntry.title.ilike(pattern),
                             MoneyEntry.payment_method.ilike(pattern),
-                            MoneyEntry.payment_method.in_([
-                                key for key, label in PAYMENT_METHOD_LABELS.items()
-                                if query in label
-                            ]),
+                            MoneyEntry.payment_method.in_(
+                                [
+                                    key
+                                    for key, label in PAYMENT_METHOD_LABELS.items()
+                                    if query in label
+                                ]
+                            ),
                         ),
                     )
                 ),
@@ -397,6 +421,31 @@ def _confirm_locked(
     db: Session, record: LedgerRecord, actor_id: str, actor_type: str = "user"
 ) -> None:
     _validate_confirmable(record)
+    from app.models import ImportReviewItem, SourceObservation
+
+    anomaly = db.scalar(
+        select(ImportReviewItem.id)
+        .where(
+            ImportReviewItem.owner_id == record.owner_id,
+            ImportReviewItem.record_id == record.id,
+            ImportReviewItem.review_state == "pending",
+            ImportReviewItem.duplicate_of_record_id.is_(None),
+            ImportReviewItem.amount_anomaly_reason.is_not(None),
+        )
+        .limit(1)
+    )
+    observation = db.scalar(
+        select(SourceObservation.id)
+        .join(LedgerRecordSource, LedgerRecordSource.source_id == SourceObservation.source_id)
+        .where(
+            LedgerRecordSource.record_id == record.id,
+            SourceObservation.owner_id == record.owner_id,
+            SourceObservation.state == "pending",
+        )
+        .limit(1)
+    )
+    if anomaly or observation:
+        raise AppError(409, "review_required", "请先处理金额异常或来源变化，再确认录入")
     timestamp = datetime.now(UTC)
     record.state = "confirmed"
     record.confirmed_at = timestamp
@@ -434,7 +483,8 @@ def confirm_records(
         db.scalars(
             record_query()
             .where(LedgerRecord.id.in_(record_ids), LedgerRecord.owner_id == owner_id)
-            .with_for_update()
+            .order_by(LedgerRecord.id)
+            .with_for_update(of=LedgerRecord)
         )
     )
     by_id = {record.id: record for record in records}
@@ -461,7 +511,7 @@ def confirm_record(
     record = db.scalar(
         record_query()
         .where(LedgerRecord.id == record_id, LedgerRecord.owner_id == owner_id)
-        .with_for_update()
+        .with_for_update(of=LedgerRecord)
     )
     if record is None:
         raise AppError(404, "record_not_found", "记录不存在")
@@ -475,7 +525,7 @@ def void_record(db: Session, owner_id: str, record_id: uuid.UUID, revision: int,
     record = db.scalar(
         record_query()
         .where(LedgerRecord.id == record_id, LedgerRecord.owner_id == owner_id)
-        .with_for_update()
+        .with_for_update(of=LedgerRecord)
     )
     if record is None:
         raise AppError(404, "record_not_found", "记录不存在")
@@ -514,8 +564,16 @@ def patch_record(
     revision: int,
     data: RecordPatch,
     actor_id: str,
+    *,
+    commit: bool = True,
 ):
-    record = get_record(db, owner_id, record_id)
+    record = db.scalar(
+        record_query()
+        .where(LedgerRecord.id == record_id, LedgerRecord.owner_id == owner_id)
+        .with_for_update(of=LedgerRecord)
+    )
+    if record is None:
+        raise AppError(404, "record_not_found", "记录不存在")
     _check_revision(record, revision)
     if record.state == "voided":
         raise AppError(409, "record_voided", "已撤销记录不能修改")
@@ -533,6 +591,21 @@ def patch_record(
             if record.consumption:
                 record.consumption.money_entry_id = money.id
         else:
+            if data.money_entry.related_entry_id:
+                related = db.scalar(
+                    select(MoneyEntry)
+                    .join(LedgerRecord)
+                    .where(
+                        MoneyEntry.id == data.money_entry.related_entry_id,
+                        LedgerRecord.owner_id == owner_id,
+                        LedgerRecord.state != "voided",
+                        MoneyEntry.type == "expense",
+                        MoneyEntry.currency == data.money_entry.currency,
+                        MoneyEntry.record_id != record.id,
+                    )
+                )
+                if related is None or data.money_entry.type != "refund":
+                    raise AppError(422, "invalid_related_entry", "退款只能关联同币种的本人有效支出")
             category = _category(db, owner_id, data.money_entry.category_key)
             entry = record.money_entry
             entry.type = data.money_entry.type
@@ -566,7 +639,10 @@ def patch_record(
             details={"fields": changes, "reason": data.correction_reason},
         )
     )
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return get_record(db, owner_id, record.id)
 
 
@@ -605,10 +681,110 @@ def add_money_entry(
 
 
 def delete_draft(db: Session, owner_id: str, record_id: uuid.UUID, revision: int) -> None:
-    record = get_record(db, owner_id, record_id)
+    from app.models import (
+        ArchiveEvidenceLink,
+        ImportBatch,
+        ImportReviewItem,
+        RecurringCommitment,
+        SpendingIntent,
+        UseCycle,
+    )
+
+    record = db.scalar(
+        record_query()
+        .where(LedgerRecord.id == record_id, LedgerRecord.owner_id == owner_id)
+        .with_for_update(of=LedgerRecord)
+    )
+    if record is None:
+        raise AppError(404, "record_not_found", "记录不存在")
     _check_revision(record, revision)
     if record.state != "draft":
         raise AppError(409, "confirmed_requires_void", "已确认记录必须撤销，不能删除")
+    checks = [
+        select(AssetBinding.id).where(
+            AssetBinding.source_type == "record",
+            AssetBinding.source_id == record.id,
+            AssetBinding.released_at.is_(None),
+        ),
+        select(ExternalReference.id).where(
+            ExternalReference.source_type == "record", ExternalReference.source_id == record.id
+        ),
+        select(ArchiveEvidenceLink.id).where(ArchiveEvidenceLink.record_id == record.id),
+        select(UseCycle.id).where(UseCycle.source_record_id == record.id),
+        select(RecurringCommitment.id).where(RecurringCommitment.last_record_id == record.id),
+        select(SpendingIntent.id).where(SpendingIntent.completed_record_id == record.id),
+    ]
+    if record.money_entry:
+        checks.append(
+            select(MoneyEntry.id).where(MoneyEntry.related_entry_id == record.money_entry.id)
+        )
+    if any(db.scalar(stmt.limit(1)) for stmt in checks):
+        raise AppError(
+            409, "draft_has_references", "草稿存在业务引用或附件，请先解除关联；未删除任何内容"
+        )
+    reviews = list(
+        db.scalars(
+            select(ImportReviewItem).where(
+                (ImportReviewItem.record_id == record.id)
+                | (ImportReviewItem.duplicate_of_record_id == record.id)
+            )
+        )
+    )
+    batches = {review.batch_id for review in reviews}
+    from app.models import MerchantNormalizationRule
+
+    if reviews and db.scalar(
+        select(MerchantNormalizationRule.id)
+        .where(
+            MerchantNormalizationRule.source_review_item_id.in_([review.id for review in reviews])
+        )
+        .limit(1)
+    ):
+        raise AppError(409, "draft_is_rule_evidence", "此草稿仍是商家规则的追溯证据，不能直接删除")
+    if record.money_entry:
+        for review in db.scalars(
+            select(ImportReviewItem).where(
+                ImportReviewItem.refund_candidate_entry_id == record.money_entry.id
+            )
+        ):
+            review.refund_candidate_entry_id = None
+            review.revision += 1
+    for review in reviews:
+        db.delete(review)
+    links = list(
+        db.scalars(select(LedgerRecordSource).where(LedgerRecordSource.record_id == record.id))
+    )
+    db.add(
+        AuditEvent(
+            owner_id=owner_id,
+            actor_type="user",
+            actor_id=owner_id,
+            action="record.draft_deleted",
+            aggregate_type="record",
+            aggregate_id=record.id,
+            details={
+                "source_ids": [str(link.source_id) for link in links],
+                "review_ids": [str(review.id) for review in reviews],
+            },
+        )
+    )
+    for link in links:
+        db.delete(link)
+    db.flush()
+    for batch_id in batches:
+        batch = db.get(ImportBatch, batch_id)
+        pending = db.scalar(
+            select(ImportReviewItem.id)
+            .where(
+                ImportReviewItem.batch_id == batch_id, ImportReviewItem.review_state == "pending"
+            )
+            .limit(1)
+        )
+        batch.state = "open" if pending else "completed"
+    # The composite FK from consumption to money is not an ORM relationship.
+    # Flush the dependent event first; otherwise PostgreSQL may reject money deletion.
+    record.consumption = None
+    db.flush()
     db.delete(record)
     db.commit()
 

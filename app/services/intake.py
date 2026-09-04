@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.errors import AppError
 from app.models import AuditEvent, CaptureSource, LedgerRecordSource
 from app.schemas import DirectoryIntakeEnvelope, StructuredIntake, jsonable
-from app.services.records import create_record
+from app.services.records import create_record, lock_command
 
 
 class IntakeAdapter(Protocol):
@@ -74,6 +74,7 @@ def ingest_structured(
     actor_type: str = "service",
 ) -> dict[str, Any]:
     source_type = _source_type(channel, adapter)
+    lock_command(db, owner_id, source_type, data.source_external_id)
     raw = jsonable(data.model_dump())
     existing = db.scalar(
         select(CaptureSource).where(
@@ -134,6 +135,11 @@ def ingest_structured(
             )
             records.append(record)
         source.capture_state = "parsed"
+        from app.services.intake_reviews import register_intake_reviews
+        from app.services.sources import ensure_baseline
+
+        ensure_baseline(db, source)
+        register_intake_reviews(db, owner_id, source, records, data.records)
         db.add(
             AuditEvent(
                 owner_id=owner_id,

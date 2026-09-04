@@ -32,3 +32,40 @@ CaptureSource。升级前仍需数据库备份。回滚会删除新表及其建�
 
 intake 目录必须位于同一文件系统，生产者以临时文件写完并原子 rename 为 `.json`。owner 文件和
 数据库凭据使用只读文件权限提供，不写进服务日志或仓库。
+
+## 1.2 / 0007 升级
+
+0007 新增 source_observations、suggestion_feedback，保留所有金额、来源和旧预测；
+将旧 ForecastItem 的 dismissed 按事件键回填为反馈。原来源 baseline 采用按需补齐，不全库改写原文。
+升级前备份；先隔离验证 0006→0007，再一次性执行迁移，随后共同切换 Web 与 Worker。
+部署配置在仓库外运维中心维护，本仓库没有可直接套用的 NAS 地址或部署目录。
+
+数据库回滚不等于切回旧程序：旧版 Worker 不识别跨运行反馈和来源观察，因此不保证业务语义兼容。
+有新观察／反馈后，不执行 downgrade 删表；优先保留扩展模式并前向修复，必要恢复必须经用户批准，
+检查备份时间后的写入损失及 Asset 引用。未处理来源观察不能由旧确认界面绕过服务端校验。
+
+静态资源 Cache-Control 为 no-cache，HTML/API 为 no-store；更新后应检查旧标签页的提交失败提示、
+重新加载与代理子路径。尚未启用 Service Worker，不需要清理旧离线应用缓存。
+
+## 可移植 wheel 构建
+
+开发命令 scripts/build_release.py 接受 --output（必须新的空目录）、--platform（SDK 源码目录）、
+--cache-dir，构建两个 wheel 并生成 SHA-256 清单。其余第三方依赖仍需按 uv.lock 准备，
+不是一次构建就获得完全离线安装包。构建不部署、不读生产配置。
+
+安装两个 wheel 后使用 ledger-migrate 执行打包迁移；ledger-web、ledger-worker、ledger-mcp 不变。
+运行证据 CLI 位于 app.cli，避免覆盖 SDK 的同名 scripts 模块。wheel 的 app/release 内含迁移、
+alembic.ini 与插件合同，可供发布工具定位；部署工具须显式使用该位置，不假设源码 checkout 存在。
+
+## 回归与 NAS 发布硬门槛
+
+- 快速回归：pytest；前端逻辑：node --test tests/frontend/client.test.mjs；静态检查：ruff check。
+- PostgreSQL：用环境变量 LEDGER_TEST_POSTGRES_URL 指向专用 ledger_test_* 测试库再运行 pytest。
+  测试会建表、清表及临时 schema，绝不能指向生产或有业务数据的库。测试库名称校验不是备份措施。
+- 已有 test_postgres_migration 验证空库到 0006 再升级 0007及历史忽略回填；
+  test_postgres_concurrency 验证幂等、确认、身份合并、同来源并发。
+- 发布前核验目标 CPU 架构、锁定依赖／镜像摘要、迁移兼容、Web/Worker 起停、HTTPS/OIDC
+  callback/退出、Origin/CSRF/代理路径、Asset 上传引用、采集失败重试和队列积压。
+- 使用真实备份做隔离恢复并核对数据库与 Asset 引用，按现有 ledger-restore-verify 记录证据；
+  只有脚本存在或本地测试通过，不代表 NAS 恢复演练成功。
+- 记录实际内存／磁盘峰值、查询耗时与导入耗时。未有真实基线前不承诺 P95 或资源上限。

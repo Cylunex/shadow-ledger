@@ -204,6 +204,19 @@ class CommitmentCreate(StrictModel):
     auto_renew: bool | None = None
     remind_before_seconds: int = Field(default=259200, ge=0, le=31536000)
 
+    @model_validator(mode="after")
+    def valid_schedule(self):
+        from dateutil.rrule import rrulestr
+
+        if self.next_due_at.tzinfo is None or self.next_due_at.utcoffset() is None:
+            raise ValueError("next_due_at must include timezone")
+        try:
+            ZoneInfo(self.timezone)
+            rrulestr(self.recurrence_rule, dtstart=self.next_due_at)
+        except (ValueError, TypeError, ZoneInfoNotFoundError) as exc:
+            raise ValueError("invalid recurrence rule or timezone") from exc
+        return self
+
 
 class BudgetCreate(StrictModel):
     category_id: uuid.UUID | None = None
@@ -266,6 +279,10 @@ class AssetComplete(StrictModel):
 
 class ImportReviewResolve(StrictModel):
     revision: int = Field(ge=1)
+    record_revision: int | None = Field(default=None, ge=1)
+    confirm: bool = False
+    keep_merchant_unknown: bool = False
+    keep_refund_unlinked: bool = False
     merchant_id: uuid.UUID | None = None
     refund_record_id: uuid.UUID | None = None
     accept_amount_anomaly: bool = False
@@ -281,15 +298,31 @@ class ImportReviewResolve(StrictModel):
                 self.refund_record_id,
                 self.accept_amount_anomaly,
                 self.dismiss,
+                self.keep_merchant_unknown,
+                self.keep_refund_unlinked,
+                self.confirm,
             )
         ):
             raise ValueError("at least one review decision is required")
         if self.learn_merchant_rule and self.merchant_id is None:
             raise ValueError("learning a rule requires merchant_id")
         if self.dismiss and any(
-            (self.merchant_id, self.refund_record_id, self.accept_amount_anomaly)
+            (
+                self.merchant_id,
+                self.refund_record_id,
+                self.accept_amount_anomaly,
+                self.keep_merchant_unknown,
+                self.keep_refund_unlinked,
+                self.confirm,
+            )
         ):
             raise ValueError("dismiss cannot be combined with other review decisions")
+        if self.keep_merchant_unknown and self.merchant_id:
+            raise ValueError("choose a merchant or keep unknown")
+        if self.keep_refund_unlinked and self.refund_record_id:
+            raise ValueError("choose a refund target or keep unlinked")
+        if self.confirm and self.record_revision is None:
+            raise ValueError("confirmation requires record_revision")
         return self
 
 

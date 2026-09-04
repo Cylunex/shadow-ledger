@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import statistics
-from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -49,9 +48,7 @@ def apply_normalization_rule(
     return candidate.record.model_copy(update={"consumption": normalized}, deep=True), rule
 
 
-def amount_anomaly_reason(
-    db: Session, owner_id: str, record: RecordCreate
-) -> str | None:
+def amount_anomaly_reason(db: Session, owner_id: str, record: RecordCreate) -> str | None:
     entry = record.money_entry
     if entry is None or entry.type != "expense":
         return None
@@ -78,7 +75,12 @@ def amount_anomaly_reason(
         stmt = stmt.where(func.lower(MoneyEntry.title) == entry.title.casefold())
     else:
         return None
-    samples = [Decimal(value) for value in db.scalars(stmt.limit(101))]
+    samples = [
+        Decimal(value)
+        for value in db.scalars(
+            stmt.order_by(LedgerRecord.occurred_at.desc(), LedgerRecord.id.desc()).limit(101)
+        )
+    ]
     if len(samples) < 3:
         return None
     median = Decimal(str(statistics.median(samples)))
@@ -90,35 +92,21 @@ def amount_anomaly_reason(
 
 
 def refund_candidate(
-    db: Session, owner_id: str, record: RecordCreate
+    db: Session, owner_id: str, record: RecordCreate, payload=None
 ) -> MoneyEntry | None:
-    entry = record.money_entry
-    if entry is None or entry.type != "refund":
-        return None
-    start = record.occurred_at - timedelta(days=180)
-    stmt = (
-        select(MoneyEntry)
-        .join(LedgerRecord, LedgerRecord.id == MoneyEntry.record_id)
-        .where(
-            LedgerRecord.owner_id == owner_id,
-            LedgerRecord.state.in_(("draft", "confirmed")),
-            LedgerRecord.occurred_at >= start,
-            LedgerRecord.occurred_at <= record.occurred_at,
-            MoneyEntry.type == "expense",
-            MoneyEntry.currency == entry.currency,
-            MoneyEntry.amount == entry.amount,
-        )
-        .order_by(LedgerRecord.occurred_at.desc())
-        .limit(1)
-    )
-    return db.scalar(stmt)
+    import uuid
+
+    from app.services.matching import refund_candidates
+
+    rows = refund_candidates(db, owner_id, record, payload=payload, limit=1)
+    return db.get(MoneyEntry, uuid.UUID(rows[0]["entry_id"])) if rows else None
 
 
 def review_reasons(item: ImportReviewItem) -> list[str]:
     reasons: list[str] = []
     if item.duplicate_of_record_id:
         reasons.append("duplicate")
-    if item.resolution.get("refund_record_id"):
+    if item.resolution.get("refund_record_id") or item.resolution.get("refund_unlinked"):
         pass
     elif item.refund_candidate_entry_id:
         reasons.append("refund_match_suggested")
@@ -126,7 +114,11 @@ def review_reasons(item: ImportReviewItem) -> list[str]:
         reasons.append("refund_match_missing")
     if item.amount_anomaly_reason:
         reasons.append("amount_anomaly")
-    if item.raw_merchant_name and item.normalized_merchant_id is None:
+    if (
+        item.raw_merchant_name
+        and item.normalized_merchant_id is None
+        and not item.resolution.get("merchant_unknown")
+    ):
         reasons.append("merchant_confirmation_needed")
     return reasons
 
@@ -137,6 +129,7 @@ def serialize_review_item(item: ImportReviewItem) -> dict[str, Any]:
             "id": item.id,
             "batch_id": item.batch_id,
             "record_id": item.record_id,
+            "source_id": item.source_id,
             "source_external_id": item.source_external_id,
             "raw_merchant_name": item.raw_merchant_name,
             "raw_item_names": item.raw_item_names,
@@ -167,14 +160,17 @@ def quality_metrics(db: Session, owner_id: str) -> dict[str, Any]:
     with_amount = sum(entry is not None for _, entry in events)
     with_raw_merchant = sum(bool(event.merchant_name_raw) for event, _ in events)
     with_canonical_merchant = sum(event.merchant_id is not None for event, _ in events)
-    pending_reviews = db.scalar(
-        select(func.count())
-        .select_from(ImportReviewItem)
-        .where(
-            ImportReviewItem.owner_id == owner_id,
-            ImportReviewItem.review_state == "pending",
+    pending_reviews = (
+        db.scalar(
+            select(func.count())
+            .select_from(ImportReviewItem)
+            .where(
+                ImportReviewItem.owner_id == owner_id,
+                ImportReviewItem.review_state == "pending",
+            )
         )
-    ) or 0
+        or 0
+    )
 
     def ratio(value: int) -> str:
         return format(Decimal(value) / Decimal(total), ".4f") if total else "0.0000"
@@ -202,6 +198,6 @@ def quality_metrics(db: Session, owner_id: str) -> dict[str, Any]:
             "sample_count": sample_count,
             "blockers": blockers,
             "creates_forecast": False,
-            "note": "Readiness is descriptive only; Forecast remains intentionally deferred.",
+            "note": "Readiness is descriptive only; deterministic Forecast runs separately and never creates facts.",
         },
     }

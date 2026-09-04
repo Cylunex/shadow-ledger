@@ -298,3 +298,37 @@ Shadow Agent 使用独立 `/api/machine/v1/agent` 合同，不复用浏览器 Se
 
 stdio MCP 不复用浏览器 Session 或 Agent registry。它使用独立进程、最小数据库用户和受限 owner
 文件，默认只注册读取工具；显式开启后也只增加 money-only draft 工具，不提供确认、撤销或导出。
+## 1.2 工作台增量合同（ADR 0009）
+
+以下路径均在 /api/v1 下；除来源观察追加可用 ledger.capture 外，新工作台读／决定均需要用户会话，
+拒绝 service actor。原始证据不进入 MCP 默认披露。
+
+| 方法与路径 | 合同 |
+| --- | --- |
+| GET /workbench | kind/query/limit/cursor；投影 items、分类型全局 counts、next_cursor |
+| GET /import-reviews/{id} | 复核项、当前记录及 source_id |
+| POST /import-reviews/{id}/resolve | 兼容原字段；增加 record_revision、confirm、keep_merchant_unknown、keep_refund_unlinked。confirm 必须带记录版本 |
+| GET /records/{id}/refund-candidates | query；同币种 180 天内候选，最多扫描最新 200 条返回 20 条，原因与累计退款仅提示 |
+| GET /records/{id}/evidence | 最多 100 来源、100 退款、30 条审计，sources_truncated 提示来源截断 |
+| GET /capture-sources/{id}/observations | offset，20 条一页，next_offset |
+| POST /capture-sources/{id}/observations | external_revision、payload、candidate、parser/version；同版本幂等，候选禁止 confirm |
+| GET /source-observations/{id} | 观察、候选、关联记录；只读 |
+| POST /source-observations/{id}/decide | revision、action=keep/apply、reason；apply 还需 record_id/record_revision；同事务修正，不确认 |
+| POST /records/{id}/link-evidence | Idempotency-Key；source_id、record_revision、reason，可选 redundant_draft_id/redundant_revision |
+| POST /records/{id}/identities | revision、merchant_id、lines（明细 ID 到商品 ID）；不覆盖 raw 字段 |
+| GET /identities/{kind}/{id}/memory | kind=merchant/item，offset 20 条一页，聚合重定向家族的历史记录 |
+| POST /identities/propose | Idempotency-Key，手动扫描每类最多 500 个有效身份，同名／规格候选不自动合并 |
+| GET /identity-suggestions/{id} | 用户核对源／目标身份 |
+| POST /identity-suggestions/{id}/accept 或 reject | Idempotency-Key；只能处理 pending，接受执行受控合并 |
+| POST /forecast-items/{id}/feedback | revision、feedback_revision、state、snoozed_until；新反馈版本冲突 409 |
+| GET /forecast-evaluation | as_of、timezone、horizon_days（1–365）；只读复购回看，明确当前事实与观察窗口限制 |
+
+商家／商品 PATCH、别名 POST、merge POST 均需 Idempotency-Key 并限定用户会话。
+采集 retry 需 Idempotency-Key，只能重试 failed；返回 queued 不代表解析成功。
+Forecast 返回 effective state、feedback_revision、episode_key、confidence_kind；
+旧 dismiss 仍接受 If-Match，桥接忽略反馈，不改快照。
+imports 的 source 支持已检测的 Markdown／CSV；未知表头、歧义金额明确 422，不猜测字段。
+
+统一规则：来源版本冲突、记录／复核／反馈陈旧返回 409；确认前的金额异常或来源变化返回
+review_required；普通商家未规范化、退款暂不关联可保留未知。批量确认任一失败时整批事务不提交。
+具体格式、上限和权限见 [优化实现](optimization-implementation.md)。

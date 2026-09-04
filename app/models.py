@@ -758,3 +758,45 @@ class ForecastItem(Timestamps, Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     state: Mapped[str] = mapped_column(String(20), default="active")
     revision: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class SuggestionFeedback(Timestamps, Base):
+    __tablename__ = "suggestion_feedback"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "episode_key", name="uq_feedback_episode"),
+        CheckConstraint("state IN ('dismissed','snoozed','handled','active')", name="ck_feedback_state"),
+        CheckConstraint("revision > 0", name="ck_feedback_revision"),
+        CheckConstraint("state <> 'snoozed' OR snoozed_until IS NOT NULL", name="ck_feedback_snooze"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    owner_id: Mapped[str] = mapped_column(Text)
+    episode_key: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(20))
+    snoozed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class SourceObservation(Timestamps, Base):
+    """Append-only source content; only the explicit user's review decision is mutable."""
+
+    __tablename__ = "source_observations"
+    __table_args__ = (
+        UniqueConstraint("source_id", "external_revision", name="uq_observation_version"),
+        CheckConstraint("state IN ('baseline','pending','kept','applied')", name="ck_observation_state"),
+        CheckConstraint("revision > 0", name="ck_observation_revision"),
+        Index("idx_observation_owner_state", "owner_id", "state", "created_at", "id"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    owner_id: Mapped[str] = mapped_column(Text)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("capture_sources.id"))
+    external_revision: Mapped[str] = mapped_column(String(200))
+    raw_hash: Mapped[bytes] = mapped_column(LargeBinary)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
+    candidate: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    field_evidence: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    parser: Mapped[str] = mapped_column(String(80))
+    parser_version: Mapped[str] = mapped_column(String(40))
+    schema_version: Mapped[str] = mapped_column(String(20), default="1")
+    state: Mapped[str] = mapped_column(String(20), default="pending")
+    resolution: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
