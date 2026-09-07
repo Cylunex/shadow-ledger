@@ -399,8 +399,18 @@ def test_nexus_command_commits_once_without_review_page(agent_app_factory) -> No
         repeated = client.post(
             "/api/machine/v1/agent/nexus/commands", headers=_authorization(), json=command
         )
+        mismatched = client.post(
+            "/api/machine/v1/agent/nexus/commands",
+            headers=_authorization(),
+            json={
+                **command,
+                "command_id": "cmd_ledger_mismatched_income_0001",
+                "arguments": {**command["arguments"], "intent": "ledger.income.quick"},
+            },
+        )
 
         assert first.status_code == repeated.status_code == 200
+        assert mismatched.status_code == 422
         assert first.json()["status"] == "committed"
         assert first.json()["result_kind"] == "record"
         assert first.json()["replayed"] is False

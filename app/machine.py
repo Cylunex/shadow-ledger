@@ -739,6 +739,11 @@ def execute_nexus_ledger_command(
         occurred_at = datetime.now(UTC).isoformat()
     money_type = fields.get("moneyType")
     amount = fields.get("amount")
+    intent_matches_record = body.intent == "ledger.record" or body.intent.startswith("ledger.record.")
+    expected_intent = f"ledger.{money_type}"
+    intent_matches_money_type = body.intent == expected_intent or body.intent.startswith(f"{expected_intent}.")
+    if not (intent_matches_record or intent_matches_money_type):
+        raise AppError(422, "invalid_nexus_command", "账目命令意图与收支类型不一致")
     if money_type not in {"expense", "income", "refund"} or amount is None:
         raise AppError(422, "invalid_nexus_command", "账目命令缺少金额或收支类型")
     try:
