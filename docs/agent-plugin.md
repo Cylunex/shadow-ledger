@@ -1,5 +1,7 @@
 # Ledger Shadow Agent 插件
 
+> 2026-09-07 设计衔接：统一鉴权、Agent 与 Nexus 目标规范以 [本项目接入设计](nexus-integration-design.md) 为准。不再新增领域自管 OIDC/Session、Agent registry/Grant/审批中心或模型/工具通用循环；普通明确写入采用中央 current_intent。新决策由 ADR 0011 接续；旧 428 与历史凭证不放宽、不重写。以下相关条目仅描述旧实现/历史阶段，不能作为新增实现继续复制；未迁移接口仍保留当前安全限制。
+
 > 1.3 安全升级：ADR 0010 覆盖本文早期 commit/reject 的长期授权语义。allow_confirm 仅为审核资格，
 > 还必须有 Ledger 用户签发的精确一次性 approval_grant_id；缺失返回 428。真实 Receipt 使用独立 URI。
 > v2 工具目录、Skill 和 MCP 接入详见 [Agent 方案](agent-optimization-2026-09.md)。

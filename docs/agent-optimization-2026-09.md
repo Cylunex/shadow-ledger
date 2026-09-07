@@ -1,5 +1,7 @@
 # Agent 增量优化方案与实现（1.3.0）
 
+> 2026-09-07 设计衔接：统一鉴权、Agent 与 Nexus 目标规范以 [本项目接入设计](nexus-integration-design.md) 为准。不再新增领域自管 OIDC/Session、Agent registry/Grant/审批中心或模型/工具通用循环；普通明确写入采用中央 current_intent。新决策由 ADR 0011 接续；旧 428 与历史凭证不放宽、不重写。以下相关条目仅描述旧实现/历史阶段，不能作为新增实现继续复制；未迁移接口仍保留当前安全限制。
+
 研究日期：2026-09-04。代码基线：1.2.0 / c54d9dc，而非附件引用的旧 main / 5f71602。
 决策见 [ADR 0010](decisions/0010-agent-control-plane.md)。本文区分已实现能力和外部联调门槛。
 

@@ -60,3 +60,5 @@ MCP 与自动抓单的配置和安全边界见
 - [通用运行说明](docs/operations.md)
 - [消费事实导入复核与运行证据](docs/import-review-and-evidence.md)
 - [1.2 消费闭环优化与验收范围](docs/optimization-implementation.md)
+
+- [统一鉴权、Agent 与 Nexus 接入设计（目标方案，尚未实现）](docs/nexus-integration-design.md)
