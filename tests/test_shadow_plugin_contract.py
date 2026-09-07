@@ -50,7 +50,7 @@ def test_shadow_plugin_contract_matches_machine_routes(settings) -> None:
     actual_routes = _application_routes(create_app(settings))
 
     assert plugin.plugin_id == "shadow-ledger"
-    assert plugin.version == "1.3.0"
+    assert plugin.version == "1.3.1"
     assert declared_routes <= actual_routes
     assert {item["id"] for item in plugin.agent_manifest["capabilities"]} == {
         "ledger.summary.read",

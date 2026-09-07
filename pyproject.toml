@@ -1,6 +1,6 @@
 [project]
 name = "shadow-ledger"
-version = "1.3.0"
+version = "1.3.1"
 description = "以消费为中心的个人收支记录与规划系统"
 readme = "README.md"
 requires-python = ">=3.12"

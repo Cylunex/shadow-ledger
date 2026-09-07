@@ -589,6 +589,26 @@ def _review_consumption(fields: dict[str, object]) -> ConsumptionInput | None:
     scene = fields.get("scene")
     if not isinstance(scene, str) or not scene:
         raise AppError(422, "invalid_nexus_review", "消费草稿缺少 scene")
+    allowed_scenes = (
+        "online_purchase",
+        "offline_purchase",
+        "delivery",
+        "dine_in",
+        "drink",
+        "service",
+        "subscription",
+        "transport",
+        "entertainment",
+        "travel",
+        "other",
+    )
+    if scene not in allowed_scenes:
+        raise AppError(
+            422,
+            "invalid_nexus_review",
+            "scene 字段无效",
+            {"field": "scene", "value": scene, "allowed_values": list(allowed_scenes)},
+        )
 
     raw_items = fields.get("consumptionItemsJson", [])
     if isinstance(raw_items, str):

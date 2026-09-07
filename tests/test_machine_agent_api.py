@@ -669,6 +669,34 @@ def test_nexus_review_preserves_rich_consumption_and_source_refs(agent_app_facto
         assert committed.json()["source_refs"] == sorted(payload["source_refs"])
 
 
+def test_nexus_review_reports_allowed_values_for_invalid_scene(agent_app_factory) -> None:
+    with agent_app_factory(("ledger.records.draft", "ledger.records.write")) as (client, _):
+        response = client.post(
+            "/api/machine/v1/agent/nexus/reviews",
+            headers={**_authorization(), "Idempotency-Key": "invalid-offline-scene"},
+            json={
+                "intent": "ledger.transaction",
+                "summary": "线下消费",
+                "fields": {
+                    "occurredAt": "2026-09-07T13:12:00+08:00",
+                    "moneyType": "expense",
+                    "amount": "28.00",
+                    "currency": "CNY",
+                    "categoryKey": "food",
+                    "title": "炒面片",
+                    "scene": "offline",
+                },
+                "source_refs": [],
+            },
+        )
+        assert response.status_code == 422
+        error = response.json()["error"]
+        assert error["message"] == "scene 字段无效"
+        assert error["details"]["field"] == "scene"
+        assert "dine_in" in error["details"]["allowed_values"]
+        assert "offline" not in error["details"]["allowed_values"]
+
+
 def test_model_visible_agent_draft_remains_money_only(agent_app_factory) -> None:
     with agent_app_factory(("ledger.records.draft",)) as (client, _):
         response = client.post(

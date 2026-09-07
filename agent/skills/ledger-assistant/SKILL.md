@@ -25,6 +25,9 @@ v2 运行时按当前回合选择 research（问账）、capture（明确保存�
    `paymentMethod`、`scene`、`merchantNameRaw`、`channelKey`、`channelNameRaw`、`placeRef`、`consumptionNote`，以及
    JSON 字符串 `consumptionItemsJson`。每个明细可含 `rawName`、`quantity`、`unit`、`amount`、
    `contentCategory`、`note`、`sortOrder`；不得为了填满字段而推断缺失事实。
+   `scene` 仅可为 `online_purchase`、`offline_purchase`、`delivery`、`dine_in`、`drink`、
+   `service`、`subscription`、`transport`、`entertainment`、`travel`、`other`；餐馆堂食用
+   `dine_in`，线下购买商品用 `offline_purchase`，不得输出 `offline`。
 6. 实际创建草稿后返回引用和 `draft` 状态，说明它尚未成为正式账目。
 
 ## 安全边界
