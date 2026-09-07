@@ -5,6 +5,21 @@ info:
 servers:
   - url: https://ledger.example.com
 paths:
+  /api/machine/v1/agent/nexus/commands:
+    post:
+      operationId: execute_nexus_ledger_command
+      summary: Commit one ordinary private Ledger record under the current user intent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Strict execution receipt for the committed Ledger record
+          content:
+            application/json:
+              schema: { type: object }
   /api/machine/v1/agent/summary:
     get:
       operationId: get_agent_summary

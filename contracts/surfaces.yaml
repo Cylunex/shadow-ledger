@@ -81,14 +81,14 @@ surfaces:
           tone: neutral
   - id: capture
     type: capture
-    capability: ledger.records.draft
-    operation_id: create_nexus_ledger_review
+    capability: ledger.records.write
+    operation_id: execute_nexus_ledger_command
     risk_level: L2
     intent_prefixes: [ledger.record, ledger.expense, ledger.income, ledger.refund]
   - id: quick-expense
     type: quick-action
-    capability: ledger.records.draft
-    operation_id: create_nexus_ledger_review
+    capability: ledger.records.write
+    operation_id: execute_nexus_ledger_command
     risk_level: L2
     action:
       title: 记一笔支出
@@ -154,8 +154,8 @@ surfaces:
           default: Asia/Shanghai
   - id: quick-income
     type: quick-action
-    capability: ledger.records.draft
-    operation_id: create_nexus_ledger_review
+    capability: ledger.records.write
+    operation_id: execute_nexus_ledger_command
     risk_level: L2
     action:
       title: 记一笔收入

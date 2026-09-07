@@ -38,7 +38,7 @@ from app.schemas import (
     StrictModel,
     jsonable,
 )
-from app.services.records import create_record, get_record
+from app.services.records import create_record, get_record, idempotency_lookup
 
 router = APIRouter(prefix="/api/machine/v1/agent", tags=["machine-agent"])
 
@@ -106,6 +106,17 @@ class NexusReviewCreate(StrictModel):
         ):
             raise ValueError("source_refs must contain valid shadow:// URIs")
         return list(dict.fromkeys(value))
+
+
+class NexusLedgerCommand(StrictModel):
+    protocol: Literal["shadow.command.v1"]
+    command_id: str = Field(pattern=r"^cmd_[A-Za-z0-9_-]{8,128}$")
+    capability_ref: str = Field(pattern=r"^shadow://capabilities/.+/ledger\.records\.write$")
+    operation_id: Literal["execute_nexus_ledger_command"]
+    schema_version: Literal[1]
+    arguments: NexusReviewCreate
+    target_refs: list[str] = Field(default_factory=list, max_length=16)
+    source_refs: list[str] = Field(default_factory=list, max_length=16)
 
 
 def _bearer_error(status_code: int, code: str, message: str) -> AppError:
@@ -707,6 +718,67 @@ def create_nexus_ledger_review(
     db.commit()
     record = get_record(db, grant.owner_id, record.id)
     return _ledger_review_envelope(record, db, request.state.request_id)
+
+
+@router.post("/nexus/commands", operation_id="execute_nexus_ledger_command")
+def execute_nexus_ledger_command(
+    command: NexusLedgerCommand,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Commit one ordinary private Ledger record under the caller's current intent."""
+    identity = _require_agent(request, authorization, "ledger.records.write")
+    grant = _grant(db, identity, "allow_confirm")
+    if not grant.allow_drafts:
+        raise AppError(403, "ledger_grant_forbidden", "Ledger 资源操作未授权")
+    body = command.arguments
+    fields = body.fields
+    occurred_at = fields.get("occurredAt")
+    if not isinstance(occurred_at, str):
+        occurred_at = datetime.now(UTC).isoformat()
+    money_type = fields.get("moneyType")
+    amount = fields.get("amount")
+    if money_type not in {"expense", "income", "refund"} or amount is None:
+        raise AppError(422, "invalid_nexus_command", "账目命令缺少金额或收支类型")
+    try:
+        candidate = RecordCreate(
+            occurred_at=datetime.fromisoformat(occurred_at),
+            timezone=str(fields.get("timezone") or "Asia/Shanghai"),
+            money_entry=MoneyEntryInput(
+                type=money_type,
+                amount=amount,
+                currency=str(fields.get("currency", "CNY")),
+                category_key=str(fields["categoryKey"]) if fields.get("categoryKey") is not None else None,
+                title=str(fields.get("title") or body.summary),
+                payment_method=_review_text(fields, "paymentMethod", maximum=24),
+            ),
+            consumption=_review_consumption(fields),
+            confirm=True,
+        )
+    except (TypeError, ValueError) as exc:
+        raise AppError(422, "invalid_nexus_command", "账目命令字段无效") from exc
+    key = f"agent:{identity.agent_id}:{command.command_id}"
+    replayed = idempotency_lookup(db, grant.owner_id, "records.create", key, candidate.model_dump()) is not None
+    record = create_record(
+        db, grant.owner_id, candidate, key, identity.agent_id, actor_type="agent", commit=False
+    )
+    _sync_nexus_source_refs(db, grant.owner_id, record.id, body.source_refs)
+    db.commit()
+    return jsonable({
+        "protocol": "shadow.execution-result.v1",
+        "command_id": command.command_id,
+        "capability_ref": command.capability_ref,
+        "operation_id": command.operation_id,
+        "status": "committed",
+        "result_kind": "record",
+        "resource_ref": f"shadow://ledger/records/{record.id}",
+        "receipt_ref": f"shadow://ledger/operations/{command.command_id}",
+        "completed_at": record.updated_at,
+        "replayed": replayed,
+        "summary": "账目已保存。",
+        "fields": {"state": record.state, "revision": record.revision},
+    })
 
 
 @router.get("/nexus/reviews", operation_id="list_nexus_ledger_reviews")

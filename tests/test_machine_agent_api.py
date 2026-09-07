@@ -368,6 +368,55 @@ def test_reviewed_agent_draft_commit_is_scoped_audited_and_idempotent(
             assert audit.actor_id == OWNER_ID
 
 
+def test_nexus_command_commits_once_without_review_page(agent_app_factory) -> None:
+    with agent_app_factory(("ledger.records.write",)) as (client, _):
+        command = {
+            "protocol": "shadow.command.v1",
+            "command_id": "cmd_ledger_direct_expense_0001",
+            "capability_ref": "shadow://capabilities/shadow-ledger/ledger-primary/ledger.records.write",
+            "operation_id": "execute_nexus_ledger_command",
+            "schema_version": 1,
+            "arguments": {
+                "intent": "ledger.expense.quick",
+                "summary": "记录午餐 36.50 元",
+                "fields": {
+                    "occurredAt": "2026-09-07T12:30:00+08:00",
+                    "timezone": "Asia/Shanghai",
+                    "moneyType": "expense",
+                    "amount": "36.50",
+                    "currency": "CNY",
+                    "title": "午餐",
+                },
+                "source_text": "午餐 36.5",
+                "source_refs": ["shadow://nexus/turns/direct-ledger"],
+            },
+            "target_refs": [],
+            "source_refs": ["shadow://nexus/turns/direct-ledger"],
+        }
+        first = client.post(
+            "/api/machine/v1/agent/nexus/commands", headers=_authorization(), json=command
+        )
+        repeated = client.post(
+            "/api/machine/v1/agent/nexus/commands", headers=_authorization(), json=command
+        )
+
+        assert first.status_code == repeated.status_code == 200
+        assert first.json()["status"] == "committed"
+        assert first.json()["result_kind"] == "record"
+        assert first.json()["replayed"] is False
+        assert repeated.json() == {**first.json(), "replayed": True}
+        assert first.json()["resource_ref"].startswith("shadow://ledger/records/")
+        assert first.json()["receipt_ref"] == (
+            "shadow://ledger/operations/cmd_ledger_direct_expense_0001"
+        )
+
+        assert database.SessionLocal is not None
+        with database.SessionLocal() as session:
+            rows = list(session.scalars(select(LedgerRecord)))
+            assert len(rows) == 1
+            assert rows[0].state == "confirmed"
+
+
 def test_agent_draft_commit_requires_write_scope_and_resource_grant(agent_app_factory) -> None:
     with agent_app_factory(("ledger.records.draft",)) as (client, _):
         created = client.post(
